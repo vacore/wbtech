@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: orders_postgres
+    environment:
+      POSTGRES_DB: orders_db
+      POSTGRES_USER: orders_user
+      POSTGRES_PASSWORD: orders_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orders_user -d orders_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - orders_network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: orders_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - orders_network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: orders_kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks:
+      - orders_network
+
+  order-service:
+    build: .
+    container_name: orders_app
+    tty: true
+    ports:
+      - "8081:8081"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: orders_user
+      DB_PASSWORD: orders_password
+      DB_NAME: orders_db
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPIC: orders
+      KAFKA_GROUP_ID: orders-service
+      HTTP_PORT: 8081
+      CACHE_MAX_ITEMS: "${CACHE_MAX_ITEMS:-1000}"
+      CACHE_TTL: "${CACHE_TTL:-30m}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: on-failure
+    networks:
+      - orders_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  test-producer:
+    build:
+      context: .
+      dockerfile: cmd/test_producer/Dockerfile
+    container_name: test_producer
+    tty: true
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPIC: orders
+      ORDER_SERVICE_URL: http://order-service:8081
+      SIM_WORKERS: "${SIM_WORKERS:-16}"          # Number of concurrent workers
+      SIM_MIN_DELAY: "${SIM_MIN_DELAY:-500ms}"   # Min delay between ops per worker
+      SIM_MAX_DELAY: "${SIM_MAX_DELAY:-3s}"      # Max delay between ops per worker
+      SIM_INVALID_PCT: "${SIM_INVALID_PCT:-15}"  # Probability of sending invalid data (percents)
+      SIM_SEED_COUNT: "${SIM_SEED_COUNT:-20}"    # Initial number of orders to work with
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - orders_network
+
+volumes:
+  postgres_data:
+
+networks:
+  orders_network:
+    driver: bridge

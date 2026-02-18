@@ -1,0 +1,22 @@
+version: "2"
+linters:
+  settings:
+    errcheck:
+      # Don't check these functions
+      exclude-functions:
+        - (io.ReadCloser).Close  # network already done
+        - (*os).Setenv           # only fails on empty string
+        - (*os).Unsetenv         # same
+        - (crypto/rand).Read     # only fails if OS is broken
+        - io.ReadAll             # don't care about content
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Exclude some checks in test files
+      - linters:
+          - errcheck
+        path: _test\.go

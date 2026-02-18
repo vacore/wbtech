@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Service</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container { max-width: 1200px; margin: 0 auto; }
+
+        h1 {
+            color: white; text-align: center; margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        /* Stats bar */
+        .stats {
+            background: white; padding: 15px 20px; border-radius: 15px;
+            margin-bottom: 20px; display: flex; justify-content: space-around;
+            flex-wrap: wrap; gap: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .stat-item { text-align: center; min-width: 80px; }
+        .stat-value { font-size: 24px; font-weight: bold; color: #667eea; }
+        .stat-label { color: #666; font-size: 11px; text-transform: uppercase; }
+
+        /* Main layout */
+        .main-content {
+            display: grid; grid-template-columns: 370px 1fr;
+            gap: 20px; align-items: start;
+        }
+        @media (max-width: 768px) { .main-content { grid-template-columns: 1fr; } }
+
+        /* Order List Panel */
+        .order-list-panel {
+            background: white; border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            display: flex; flex-direction: column;
+            height: calc(100vh - 190px); min-height: 350px; overflow: hidden;
+        }
+
+        .list-header {
+            flex-shrink: 0; padding: 15px 15px 10px;
+            border-bottom: 2px solid #667eea;
+        }
+        .header-top {
+            display: flex; align-items: center;
+            justify-content: space-between; margin-bottom: 6px;
+        }
+        .order-list-title { font-size: 16px; font-weight: 600; color: #333; }
+        .header-buttons { display: flex; gap: 4px; }
+
+        .header-btn {
+            background: #edf2f7; color: #4a5568;
+            padding: 4px 10px; font-size: 12px;
+            border: none; border-radius: 6px;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .header-btn:hover { background: #e2e8f0; transform: none; box-shadow: none; }
+        .header-btn.active { background: #667eea; color: white; }
+
+        .range-text {
+            font-size: 12px; color: #718096; text-align: center;
+        }
+
+        /* Scrollable virtual area */
+        .list-body {
+            flex: 1; display: flex; min-height: 0; position: relative;
+        }
+
+        /* The real items, no overflow */
+        .order-list-items {
+            flex: 1; overflow: hidden; padding: 8px 10px 8px 15px;
+        }
+        .order-list { list-style: none; }
+
+        /* Custom scrollbar track */
+        .scroll-track {
+            width: 14px; flex-shrink: 0;
+            background: #f1f5f9; border-left: 1px solid #e2e8f0;
+            position: relative; cursor: pointer;
+        }
+        .scroll-thumb {
+            position: absolute; left: 2px; right: 2px;
+            background: #cbd5e1; border-radius: 5px;
+            min-height: 20px; cursor: grab;
+            transition: background 0.15s;
+        }
+        .scroll-thumb:hover, .scroll-thumb.dragging {
+            background: #94a3b8;
+        }
+
+        .order-list-item {
+            padding: 7px 10px; margin-bottom: 4px;
+            background: #f7fafc; border-radius: 8px;
+            cursor: pointer; transition: all 0.15s;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .order-list-item:hover { background: #edf2f7; transform: translateX(3px); }
+        .order-list-item.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .order-list-item.active .order-date { color: rgba(255,255,255,0.7); }
+        .order-list-item.active .cache-badge { background: rgba(255,255,255,0.3); color: white; }
+
+        .order-item-info { display: flex; flex-direction: column; min-width: 0; }
+        .order-uid {
+            font-size: 12px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .order-date { font-size: 10px; color: #a0aec0; margin-top: 1px; }
+
+        .cache-badge {
+            font-size: 10px; padding: 2px 8px; border-radius: 10px;
+            flex-shrink: 0; margin-left: 8px; white-space: nowrap;
+        }
+        .cache-badge.cached { background: #c6f6d5; color: #276749; }
+        .cache-badge.not-cached { background: #fed7d7; color: #c53030; }
+
+        .list-empty {
+            text-align: center; color: #a0aec0;
+            padding: 40px 10px; font-size: 14px;
+        }
+        .list-empty-icon { font-size: 40px; margin-bottom: 10px; }
+
+        /* Detail panel */
+        .order-detail-panel {
+            background: white; padding: 25px; border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            max-height: calc(100vh - 190px); overflow-y: auto;
+        }
+        .search-box { margin-bottom: 20px; }
+        .search-form { display: flex; gap: 10px; }
+        input[type="text"] {
+            flex: 1; padding: 12px 15px;
+            border: 2px solid #e0e0e0; border-radius: 10px;
+            font-size: 14px; transition: border-color 0.3s;
+        }
+        input[type="text"]:focus { outline: none; border-color: #667eea; }
+
+        button {
+            padding: 12px 25px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; border: none; border-radius: 10px;
+            font-size: 14px; cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(102,126,234,0.4); }
+
+        .result { display: none; }
+        .result.visible { display: block; animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .error {
+            background: #fff5f5; border: 1px solid #fc8181;
+            color: #c53030; padding: 15px; border-radius: 10px;
+        }
+        .success-badge {
+            display: inline-block; padding: 5px 15px;
+            border-radius: 20px; font-size: 14px; margin-bottom: 20px;
+        }
+        .success-badge.from-cache { background: #c6f6d5; color: #276749; }
+        .success-badge.from-db { background: #fef3c7; color: #92400e; }
+
+        .section {
+            margin-bottom: 25px; padding-bottom: 25px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+        .section-title {
+            font-size: 16px; font-weight: 600; color: #333;
+            margin-bottom: 15px; display: flex; align-items: center; gap: 10px;
+        }
+        .section-title::before {
+            content: ''; width: 4px; height: 18px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 2px;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 12px;
+        }
+        .info-item { background: #f7fafc; padding: 10px 12px; border-radius: 8px; }
+        .info-label { font-size: 11px; color: #718096; text-transform: uppercase; letter-spacing: 0.5px; }
+        .info-value { font-size: 14px; color: #2d3748; margin-top: 3px; word-break: break-all; }
+
+        .items-list { display: grid; gap: 12px; }
+        .item-card {
+            background: #f7fafc; padding: 15px;
+            border-radius: 10px; border-left: 4px solid #667eea;
+        }
+        .item-name { font-weight: 600; color: #2d3748; margin-bottom: 10px; }
+        .item-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 8px;
+        }
+
+        .loader { display: none; text-align: center; padding: 40px; }
+        .loader.visible { display: block; }
+        .spinner {
+            width: 40px; height: 40px;
+            border: 4px solid #e0e0e0; border-top-color: #667eea;
+            border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .empty-state { text-align: center; color: #718096; padding: 40px 20px; }
+        .empty-state-icon { font-size: 48px; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛒 Order Service</h1>
+
+        <div class="stats">
+            <div class="stat-item"><div class="stat-value" id="dbCount">-</div><div class="stat-label">Total (DB)</div></div>
+            <div class="stat-item"><div class="stat-value" id="cacheSize">-</div><div class="stat-label">Cached</div></div>
+            <div class="stat-item"><div class="stat-value" id="cacheMax">-</div><div class="stat-label">Max Size</div></div>
+            <div class="stat-item"><div class="stat-value" id="cacheHits">-</div><div class="stat-label">Hits</div></div>
+            <div class="stat-item"><div class="stat-value" id="cacheMisses">-</div><div class="stat-label">Misses</div></div>
+            <div class="stat-item"><div class="stat-value" id="hitRate">-</div><div class="stat-label">Hit Rate</div></div>
+            <div class="stat-item"><div class="stat-value" id="evictions">-</div><div class="stat-label">Evictions</div></div>
+            <div class="stat-item"><div class="stat-value" id="serverStatus">●</div><div class="stat-label">Status</div></div>
+        </div>
+
+        <div class="main-content">
+            <div class="order-list-panel">
+                <div class="list-header">
+                    <div class="header-top">
+                        <span class="order-list-title">Orders</span>
+                        <div class="header-buttons">
+                            <button class="header-btn" id="sortBtn" onclick="toggleSort()">↑ Oldest first</button>
+                            <button class="header-btn" onclick="refreshList()">↻ Refresh</button>
+                        </div>
+                    </div>
+                    <div class="range-text" id="rangeText">Loading...</div>
+                </div>
+
+                <div class="list-body">
+                    <div class="order-list-items" id="orderListItems">
+                        <ul class="order-list" id="orderList">
+                            <li class="list-empty">
+                                <div class="list-empty-icon">📦</div>
+                                <div>Loading orders...</div>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="scroll-track" id="scrollTrack">
+                        <div class="scroll-thumb" id="scrollThumb"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="order-detail-panel">
+                <div class="search-box">
+                    <form class="search-form" onsubmit="searchOrder(event)">
+                        <input type="text" id="orderInput" placeholder="Enter Order UID or select from list">
+                        <button type="submit">Search</button>
+                    </form>
+                </div>
+                <div class="loader" id="loader">
+                    <div class="spinner"></div>
+                    <p style="margin-top: 15px; color: #666;">Loading...</p>
+                </div>
+                <div class="result" id="result">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">👆</div>
+                        <div>Select an order or enter an Order UID</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const ITEM_HEIGHT = 46;
+
+    const state = {
+        page: 0,
+        pageSize: 11,
+        total: 0,
+        loading: false,
+        sortAsc: true,
+        currentUID: null,
+        lastDbCount: -1,
+    };
+
+    // ── Scrollbar drag state ──
+    const drag = { active: false, startY: 0, startPage: 0 };
+
+    // ── Init ──
+
+    document.addEventListener('DOMContentLoaded', () => {
+        state.pageSize = calculatePageSize();
+        loadStats();
+        loadPage();
+        setInterval(loadStats, 5000);
+
+        // Wheel → page
+        const listItems = document.getElementById('orderListItems');
+        let wheelLock = false;
+        listItems.addEventListener('wheel', e => {
+            e.preventDefault();
+            if (wheelLock || state.loading) return;
+            wheelLock = true;
+            setTimeout(() => { wheelLock = false; }, 200);
+            if (e.deltaY > 0) goPage(state.page + 1);
+            else if (e.deltaY < 0) goPage(state.page - 1);
+        }, { passive: false });
+
+        // Click delegation
+        document.getElementById('orderList').addEventListener('click', e => {
+            const item = e.target.closest('.order-list-item');
+            if (item && item.dataset.uid) selectOrder(item.dataset.uid);
+        });
+
+        // Scrollbar: thumb drag
+        const thumb = document.getElementById('scrollThumb');
+        const track = document.getElementById('scrollTrack');
+
+        thumb.addEventListener('mousedown', e => {
+            e.preventDefault();
+            drag.active = true;
+            drag.startY = e.clientY;
+            drag.startPage = state.page;
+            thumb.classList.add('dragging');
+            document.addEventListener('mousemove', onDragMove);
+            document.addEventListener('mouseup', onDragEnd);
+        });
+
+        // Scrollbar: click on track
+        track.addEventListener('mousedown', e => {
+            if (e.target === thumb) return;
+            const rect = track.getBoundingClientRect();
+            const ratio = (e.clientY - rect.top) / rect.height;
+            const page = Math.round(ratio * maxPage());
+            goPage(page);
+        });
+
+        // Resize
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                const s = calculatePageSize();
+                if (s !== state.pageSize) {
+                    state.pageSize = s;
+                    state.page = 0;
+                    loadPage();
+                }
+            }, 200);
+        });
+    });
+
+    function onDragMove(e) {
+        if (!drag.active) return;
+        const track = document.getElementById('scrollTrack');
+        const trackH = track.clientHeight;
+        const mp = maxPage();
+        if (mp === 0) return;
+
+        const dy = e.clientY - drag.startY;
+        const pageDelta = Math.round((dy / trackH) * mp);
+        const target = Math.min(mp, Math.max(0, drag.startPage + pageDelta));
+        if (target !== state.page) goPage(target);
+    }
+
+    function onDragEnd() {
+        drag.active = false;
+        document.getElementById('scrollThumb').classList.remove('dragging');
+        document.removeEventListener('mousemove', onDragMove);
+        document.removeEventListener('mouseup', onDragEnd);
+    }
+
+    function calculatePageSize() {
+        const el = document.getElementById('orderListItems');
+        if (!el) return 11;
+        return Math.max(3, Math.floor(el.clientHeight / ITEM_HEIGHT));
+    }
+
+    function maxPage() {
+        if (state.total === 0) return 0;
+        return Math.max(0, Math.ceil(state.total / state.pageSize) - 1);
+    }
+
+    function goPage(p) {
+        const clamped = Math.min(maxPage(), Math.max(0, p));
+        if (clamped === state.page && state.total > 0) return;
+        state.page = clamped;
+        loadPage();
+    }
+
+    // ── Stats ──
+
+    async function loadStats() {
+        try {
+            const r = await fetch('/stats');
+            const d = await r.json();
+            document.getElementById('dbCount').textContent = d.db_count;
+            document.getElementById('cacheSize').textContent = d.cache_size;
+            document.getElementById('cacheMax').textContent = d.cache_max_size;
+            document.getElementById('cacheHits').textContent = d.cache_hits;
+            document.getElementById('cacheMisses').textContent = d.cache_misses;
+            document.getElementById('hitRate').textContent = d.hit_rate;
+            document.getElementById('evictions').textContent = d.cache_evictions;
+            document.getElementById('serverStatus').style.color = '#48bb78';
+
+            // Refresh order list when DB count changes (new orders / deletions)
+            if (d.db_count !== state.lastDbCount) {
+                state.lastDbCount = d.db_count;
+                loadPage();
+            }
+        } catch {
+            document.getElementById('serverStatus').style.color = '#fc8181';
+        }
+    }
+
+    // ── Order list ──
+
+    async function loadPage() {
+        if (state.loading) return;
+        state.loading = true;
+
+        const offset = state.page * state.pageSize;
+        const sort = state.sortAsc ? 'asc' : 'desc';
+
+        try {
+            const resp = await fetch(`/orders?limit=${state.pageSize}&offset=${offset}&sort=${sort}`);
+            const data = await resp.json();
+            state.total = data.total;
+            renderList(data.orders || []);
+        } catch {
+            document.getElementById('orderList').innerHTML =
+                '<li class="list-empty"><div class="list-empty-icon">❌</div><div>Failed to load</div></li>';
+        } finally {
+            state.loading = false;
+            updateNav();
+            updateScrollbar();
+        }
+    }
+
+    function renderList(orders) {
+        const list = document.getElementById('orderList');
+
+        if (state.total === 0) {
+            list.innerHTML = '<li class="list-empty"><div class="list-empty-icon">📭</div><div>No orders in database</div></li>';
+            return;
+        }
+
+        list.innerHTML = orders.map(o => {
+            const active = o.order_uid === state.currentUID ? 'active' : '';
+            return `
+                <li class="order-list-item ${active}" data-uid="${escapeAttr(o.order_uid)}">
+                    <div class="order-item-info">
+                        <span class="order-uid">${escapeHtml(o.order_uid)}</span>
+                        <span class="order-date">${formatDate(o.date_created)}</span>
+                    </div>
+                    <span class="cache-badge ${o.cached ? 'cached' : 'not-cached'}">
+                        ${o.cached ? '✓ cached' : '○ not cached'}
+                    </span>
+                </li>`;
+        }).join('');
+    }
+
+    function updateNav() {
+        if (state.total === 0) {
+            document.getElementById('rangeText').textContent = 'No orders';
+            return;
+        }
+
+        const offset = state.page * state.pageSize;
+        const count = Math.min(state.pageSize, state.total - offset);
+        let start, end;
+
+        if (state.sortAsc) {
+            start = offset + 1;
+            end = offset + count;
+        } else {
+            end = state.total - offset;
+            start = end - count + 1;
+        }
+
+        document.getElementById('rangeText').textContent =
+            `showing ${start}..${end} of ${state.total}`;
+    }
+
+    function updateScrollbar() {
+        const track = document.getElementById('scrollTrack');
+        const thumb = document.getElementById('scrollThumb');
+        const mp = maxPage();
+
+        if (mp <= 0) {
+            thumb.style.display = 'none';
+            return;
+        }
+
+        thumb.style.display = 'block';
+        const trackH = track.clientHeight;
+
+        // Thumb size proportional to visible fraction
+        const thumbH = Math.max(20, trackH * (state.pageSize / state.total));
+        thumb.style.height = thumbH + 'px';
+
+        // Thumb position
+        const scrollable = trackH - thumbH;
+        const ratio = state.page / mp;
+        thumb.style.top = (ratio * scrollable) + 'px';
+    }
+
+    function refreshList() {
+        loadPage();
+    }
+
+    function toggleSort() {
+        state.sortAsc = !state.sortAsc;
+        document.getElementById('sortBtn').textContent =
+            state.sortAsc ? '↑ Oldest first' : '↓ Newest first';
+        state.page = 0;
+        loadPage();
+    }
+
+    // ── Order detail ──
+
+    function selectOrder(uid) {
+        state.currentUID = uid;
+        document.getElementById('orderInput').value = uid;
+        document.querySelectorAll('.order-list-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.uid === uid);
+        });
+        fetchOrder(uid);
+    }
+
+    async function searchOrder(event) {
+        event.preventDefault();
+        const uid = document.getElementById('orderInput').value.trim();
+        if (!uid) return;
+        state.currentUID = uid;
+        document.querySelectorAll('.order-list-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.uid === uid);
+        });
+        fetchOrder(uid);
+    }
+
+    async function fetchOrder(uid) {
+        const loader = document.getElementById('loader');
+        const result = document.getElementById('result');
+        loader.classList.add('visible');
+        result.classList.remove('visible');
+
+        try {
+            const resp = await fetch(`/order/${encodeURIComponent(uid)}`);
+            const data = await resp.json();
+            loader.classList.remove('visible');
+
+            if (resp.ok) {
+                displayOrder(data);
+                // Refresh the entire list to update all cache badges
+                // (clicking one order may evict another from LRU cache)
+                loadPage();
+                loadStats();
+            } else {
+                result.innerHTML = `<div class="error">${escapeHtml(data.error || 'Order not found')}</div>`;
+                result.classList.add('visible');
+            }
+        } catch (err) {
+            loader.classList.remove('visible');
+            result.innerHTML = `<div class="error">Failed to connect: ${escapeHtml(err.message)}</div>`;
+            result.classList.add('visible');
+        }
+    }
+
+    function displayOrder(data) {
+        const order = data.order;
+        const source = data.source;
+        const time = data.time;
+        const badgeClass = source === 'cache' ? 'from-cache' : 'from-db';
+        const badgeIcon = source === 'cache' ? '⚡' : '🗄️';
+
+        const html = `
+            <span class="success-badge ${badgeClass}">
+                ${badgeIcon} Retrieved from ${escapeHtml(source)} in ${escapeHtml(time)}
+            </span>
+            <div class="section">
+                <div class="section-title">Order Information</div>
+                <div class="info-grid">
+                    ${infoCell('Order UID', order.order_uid)}
+                    ${infoCell('Track Number', order.track_number)}
+                    ${infoCell('Entry', order.entry)}
+                    ${infoCell('Customer ID', order.customer_id)}
+                    ${infoCell('Delivery Service', order.delivery_service)}
+                    ${infoCellRaw('Date Created', new Date(order.date_created).toLocaleString())}
+                    ${infoCell('Locale', order.locale)}
+                    ${infoCell('Shard Key', order.shardkey)}
+                </div>
+            </div>
+            <div class="section">
+                <div class="section-title">Delivery</div>
+                <div class="info-grid">
+                    ${infoCell('Name', order.delivery.name)}
+                    ${infoCell('Phone', order.delivery.phone)}
+                    ${infoCell('Email', order.delivery.email)}
+                    ${infoCell('City', order.delivery.city)}
+                    ${infoCell('Address', order.delivery.address)}
+                    ${infoCell('Region', order.delivery.region)}
+                    ${infoCell('ZIP', order.delivery.zip)}
+                </div>
+            </div>
+            <div class="section">
+                <div class="section-title">Payment</div>
+                <div class="info-grid">
+                    ${infoCell('Transaction', order.payment.transaction)}
+                    ${infoCell('Currency', order.payment.currency)}
+                    ${infoCell('Provider', order.payment.provider)}
+                    ${infoCellRaw('Amount', order.payment.amount + ' ' + escapeHtml(order.payment.currency))}
+                    ${infoCell('Bank', order.payment.bank)}
+                    ${infoCellRaw('Delivery Cost', order.payment.delivery_cost)}
+                    ${infoCellRaw('Goods Total', order.payment.goods_total)}
+                    ${infoCellRaw('Payment Date', new Date(order.payment.payment_dt * 1000).toLocaleString())}
+                </div>
+            </div>
+            <div class="section">
+                <div class="section-title">Items (${order.items.length})</div>
+                <div class="items-list">
+                    ${order.items.map(item => `
+                        <div class="item-card">
+                            <div class="item-name">${escapeHtml(item.name)} – ${escapeHtml(item.brand)}</div>
+                            <div class="item-details">
+                                ${infoCellRaw('Price', item.price)}
+                                ${infoCellRaw('Sale', item.sale + '%')}
+                                ${infoCellRaw('Total', item.total_price)}
+                                ${infoCell('Size', item.size)}
+                                ${infoCellRaw('Status', item.status)}
+                                ${infoCell('Track', item.track_number)}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+
+        const result = document.getElementById('result');
+        result.innerHTML = html;
+        result.classList.add('visible');
+    }
+
+    // ── Helpers ──
+
+    function infoCell(label, value) {
+        return `<div class="info-item"><div class="info-label">${label}</div><div class="info-value">${escapeHtml(value)}</div></div>`;
+    }
+    // infoCellRaw: only use with pre-sanitized or numeric values!
+    function infoCellRaw(label, value) {
+        return `<div class="info-item"><div class="info-label">${label}</div><div class="info-value">${value}</div></div>`;
+    }
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        const d = document.createElement('div');
+        d.textContent = String(str);
+        return d.innerHTML;
+    }
+    function escapeAttr(str) {
+        return String(str).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;');
+    }
+    function formatDate(dateStr) {
+        if (!dateStr) return '';
+        return new Date(dateStr).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            fractionalSecondDigits: 3
+        });
+    }
+</script>
+</body>
+</html>

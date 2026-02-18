@@ -1,0 +1,5 @@
+/build/
+/sql/
+/.dockerignore
+/docker-compose.yml
+/Readme.md
