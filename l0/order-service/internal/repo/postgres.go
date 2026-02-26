@@ -5,12 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"order-service/internal/config"
-	"order-service/internal/models"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+
+	"order-service/internal/config"
+	"order-service/internal/metrics"
+	"order-service/internal/models"
 )
+
+var tracer = otel.Tracer("order-service/repo")
 
 // ErrOrderNotFound is returned when order is not found in a DB
 var ErrOrderNotFound = errors.New("order not found")
@@ -86,11 +92,11 @@ type Repo struct {
 }
 
 // New creates new PostgreSQL connection pool
-func New(ctx context.Context, cfg *config.Config) (*Repo, error) {
+func New(ctx context.Context, cfg config.DBConfig) (*Repo, error) {
 	connString := fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
-		url.PathEscape(cfg.DBUser), url.PathEscape(cfg.DBPassword),
-		cfg.DBHost, cfg.DBPort, cfg.DBName,
+		url.PathEscape(cfg.User), url.PathEscape(cfg.Password),
+		cfg.Host, cfg.Port, cfg.Name,
 	)
 
 	poolConfig, err := pgxpool.ParseConfig(connString)
@@ -98,8 +104,8 @@ func New(ctx context.Context, cfg *config.Config) (*Repo, error) {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
 	}
 
-	poolConfig.MaxConns = int32(cfg.DBMaxConns)
-	poolConfig.MinConns = int32(cfg.DBMinConns)
+	poolConfig.MaxConns = int32(cfg.MaxConns)
+	poolConfig.MinConns = int32(cfg.MinConns)
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -121,11 +127,17 @@ func (r *Repo) Close() {
 // SaveOrder stores an order to a DB using transaction
 // If exists it updates the current record (upsert)
 func (r *Repo) SaveOrder(ctx context.Context, order *models.Order) error {
+	start := time.Now()
+	defer metrics.ObserveDB("save", start)
+
+	ctx, span := tracer.Start(ctx, "repo.SaveOrder")
+	defer span.End()
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after Commit, error is irrelevant
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit, error is irrelevant
 
 	// Upsert order
 	_, err = tx.Exec(ctx, `
@@ -211,7 +223,7 @@ func (r *Repo) SaveOrder(ctx context.Context, order *models.Order) error {
 	}
 	results := tx.SendBatch(ctx, batch)
 
-	// Drain results — connection stays busy until all are read.
+	// Drain results - connection stays busy until all are read.
 	for i := 0; i < len(order.Items); i++ {
 		if _, err := results.Exec(); err != nil {
 			results.Close()
@@ -232,6 +244,12 @@ func (r *Repo) SaveOrder(ctx context.Context, order *models.Order) error {
 
 // GetOrder returns an order entry via orderUID
 func (r *Repo) GetOrder(ctx context.Context, orderUID string) (*models.Order, error) {
+	start := time.Now()
+	defer metrics.ObserveDB("get", start)
+
+	ctx, span := tracer.Start(ctx, "repo.GetOrder")
+	defer span.End()
+
 	order := &models.Order{}
 
 	// Query 1: Order + delivery + payment via JOIN
@@ -277,9 +295,9 @@ func (r *Repo) GetOrder(ctx context.Context, orderUID string) (*models.Order, er
 func (r *Repo) GetAllOrders(ctx context.Context, limit int) ([]*models.Order, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("beginning read transaction: %w", err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck
+	defer tx.Rollback(ctx) //nolint:errcheck
 
 	// Query 1: all orders + delivery + payment in one JOIN
 	query := `SELECT ` + orderSelectColumns + orderFromJoin +
@@ -363,6 +381,9 @@ func (r *Repo) GetAllOrders(ctx context.Context, limit int) ([]*models.Order, er
 // GetOrderUIDs returns a paginated list of order UIDs and the total count.
 // sortAsc=true: oldest first; sortAsc=false: newest first.
 func (r *Repo) GetOrderUIDs(ctx context.Context, limit, offset int, sortAsc bool) ([]OrderListItem, int64, error) {
+	start := time.Now()
+	defer metrics.ObserveDB("get", start)
+
 	// Get total count
 	var total int64
 	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM orders`).Scan(&total)
@@ -413,6 +434,9 @@ func (r *Repo) GetOrderCount(ctx context.Context) (int64, error) {
 
 // DeleteOrder removes an order specified by the orderUID and all its related data
 func (r *Repo) DeleteOrder(ctx context.Context, orderUID string) error {
+	start := time.Now()
+	defer metrics.ObserveDB("delete", start)
+
 	result, err := r.pool.Exec(ctx, `DELETE FROM orders WHERE order_uid = $1`, orderUID)
 	if err != nil {
 		return fmt.Errorf("failed to delete order: %w", err)

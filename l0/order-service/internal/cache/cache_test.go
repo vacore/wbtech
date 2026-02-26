@@ -1,20 +1,22 @@
 package cache
 
 import (
-	"order-service/internal/models"
-	"order-service/internal/testutil"
 	"sync"
 	"testing"
 	"time"
+
+	"order-service/internal/config"
+	"order-service/internal/models"
+	"order-service/internal/testutil"
 )
 
 func TestNew(t *testing.T) {
 	tests := []struct {
 		name   string
-		config Config
+		config config.CacheConfig
 	}{
-		{"custom config", Config{MaxItems: 100, TTL: 5 * time.Minute}},
-		{"no limits", Config{MaxItems: 0, TTL: 0}},
+		{"custom config", config.CacheConfig{MaxItems: 100, TTL: 5 * time.Minute}},
+		{"no limits", config.CacheConfig{MaxItems: 0, TTL: 0}},
 	}
 
 	for _, tt := range tests {
@@ -31,7 +33,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestCache_SetAndGet(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: time.Hour})
 	defer c.Stop()
 
 	order := testutil.CreateTestOrder("order_001")
@@ -52,7 +54,7 @@ func TestCache_SetAndGet(t *testing.T) {
 }
 
 func TestCache_SetUpdatesExisting(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: time.Hour})
 	defer c.Stop()
 
 	order1 := testutil.NewOrderBuilder("order_001").WithCustomerID("old").Build()
@@ -71,7 +73,7 @@ func TestCache_SetUpdatesExisting(t *testing.T) {
 }
 
 func TestCache_LRUEviction(t *testing.T) {
-	c := New(Config{MaxItems: 3, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 3, TTL: time.Hour})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("order_001"))
@@ -91,7 +93,7 @@ func TestCache_LRUEviction(t *testing.T) {
 }
 
 func TestCache_TTLExpiration(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: 50 * time.Millisecond})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: 50 * time.Millisecond})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("order_001"))
@@ -105,7 +107,7 @@ func TestCache_TTLExpiration(t *testing.T) {
 }
 
 func TestCache_Delete(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: time.Hour})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("order_001"))
@@ -122,7 +124,7 @@ func TestCache_Delete(t *testing.T) {
 }
 
 func TestCache_LoadFromSlice(t *testing.T) {
-	c := New(Config{MaxItems: 5, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 5, TTL: time.Hour})
 	defer c.Stop()
 
 	orders := []*models.Order{
@@ -137,7 +139,7 @@ func TestCache_LoadFromSlice(t *testing.T) {
 }
 
 func TestCache_LoadFromSliceRespectsLimit(t *testing.T) {
-	c := New(Config{MaxItems: 2, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 2, TTL: time.Hour})
 	defer c.Stop()
 
 	orders := []*models.Order{
@@ -153,7 +155,7 @@ func TestCache_LoadFromSliceRespectsLimit(t *testing.T) {
 }
 
 func TestCache_LoadFromSlice_RespectsLimitWithExistingItems(t *testing.T) {
-	c := New(Config{MaxItems: 3, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 3, TTL: time.Hour})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("existing_1"))
@@ -172,7 +174,7 @@ func TestCache_LoadFromSlice_RespectsLimitWithExistingItems(t *testing.T) {
 }
 
 func TestCache_LoadFromSlice_SkipsDuplicatesInInput(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: time.Hour})
 	defer c.Stop()
 
 	orders := []*models.Order{
@@ -188,7 +190,7 @@ func TestCache_LoadFromSlice_SkipsDuplicatesInInput(t *testing.T) {
 }
 
 func TestCache_LoadFromSlice_SkipsExistingEntries(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: time.Hour})
 	defer c.Stop()
 
 	// Pre-populate cache
@@ -214,7 +216,7 @@ func TestCache_LoadFromSlice_SkipsExistingEntries(t *testing.T) {
 }
 
 func TestCache_Stats(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: time.Hour})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("order_001"))
@@ -233,7 +235,7 @@ func TestCache_Stats(t *testing.T) {
 }
 
 func TestCache_ExistsDoesNotUpdateLRU(t *testing.T) {
-	c := New(Config{MaxItems: 2, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 2, TTL: time.Hour})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("order_001"))
@@ -249,7 +251,7 @@ func TestCache_ExistsDoesNotUpdateLRU(t *testing.T) {
 }
 
 func TestCache_ConcurrentAccess(t *testing.T) {
-	c := New(Config{MaxItems: 100, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 100, TTL: time.Hour})
 	defer c.Stop()
 
 	var wg sync.WaitGroup
@@ -274,7 +276,7 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestCache_Get_ExpirationIncrementsStats(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: 50 * time.Millisecond})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: 50 * time.Millisecond})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("order_001"))
@@ -296,7 +298,7 @@ func TestCache_Get_ExpirationIncrementsStats(t *testing.T) {
 }
 
 func TestCache_Exists_ReturnsFalseForExpired(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: 50 * time.Millisecond})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: 50 * time.Millisecond})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("order_001"))
@@ -309,7 +311,7 @@ func TestCache_Exists_ReturnsFalseForExpired(t *testing.T) {
 }
 
 func TestCache_EvictOldest_EmptyCache(t *testing.T) {
-	c := New(Config{MaxItems: 1, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 1, TTL: time.Hour})
 	defer c.Stop()
 
 	// Should not panic on empty cache
@@ -323,7 +325,7 @@ func TestCache_EvictOldest_EmptyCache(t *testing.T) {
 }
 
 func TestCache_Stop(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: time.Minute})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: time.Minute})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("order_001"))
@@ -345,13 +347,13 @@ func TestCache_Stop(t *testing.T) {
 func TestCache_Stop_NilCancel(t *testing.T) {
 	// Cache with TTL=0 doesn't start cleanup goroutine,
 	// but cancel is still set. Test that Stop is safe regardless.
-	c := New(Config{MaxItems: 10, TTL: 0})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: 0})
 
 	c.Stop() // should not panic
 }
 
 func TestCache_CleanupExpired_NoTTL(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: 0})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: 0})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("order_001"))
@@ -364,7 +366,7 @@ func TestCache_CleanupExpired_NoTTL(t *testing.T) {
 }
 
 func TestCache_CleanupExpired_RemovesExpired(t *testing.T) {
-	c := New(Config{MaxItems: 10, TTL: 50 * time.Millisecond})
+	c := New(config.CacheConfig{MaxItems: 10, TTL: 50 * time.Millisecond})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("old_1"))
@@ -390,7 +392,7 @@ func TestCache_CleanupExpired_RemovesExpired(t *testing.T) {
 }
 
 func TestCache_EvictionIncrementsStats(t *testing.T) {
-	c := New(Config{MaxItems: 2, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 2, TTL: time.Hour})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("a"))
@@ -403,10 +405,56 @@ func TestCache_EvictionIncrementsStats(t *testing.T) {
 	}
 }
 
+func TestCache_TTLSlidingWindow(t *testing.T) {
+	c := New(config.CacheConfig{MaxItems: 10, TTL: 80 * time.Millisecond})
+	defer c.Stop()
+
+	c.Set(testutil.CreateTestOrder("order_001"))
+
+	// Access at 50ms - resets TTL window
+	time.Sleep(50 * time.Millisecond)
+	_, found := c.Get("order_001")
+	if !found {
+		t.Fatal("Should still be alive at 50ms")
+	}
+
+	// At 100ms total (50ms since last access) - still alive
+	time.Sleep(50 * time.Millisecond)
+	_, found = c.Get("order_001")
+	if !found {
+		t.Fatal("Should still be alive - only 50ms since last access")
+	}
+
+	// Wait full TTL without any access
+	time.Sleep(90 * time.Millisecond)
+	_, found = c.Get("order_001")
+	if found {
+		t.Error("Should have expired after 90ms of inactivity")
+	}
+}
+
+func TestCache_Set_ResetsTTL(t *testing.T) {
+	c := New(config.CacheConfig{MaxItems: 10, TTL: 80 * time.Millisecond})
+	defer c.Stop()
+
+	c.Set(testutil.CreateTestOrder("order_001"))
+
+	// Wait 50ms, then update via Set - should reset TTL
+	time.Sleep(50 * time.Millisecond)
+	c.Set(testutil.CreateTestOrder("order_001"))
+
+	// Wait another 50ms (100ms total, but only 50ms since Set)
+	time.Sleep(50 * time.Millisecond)
+	_, found := c.Get("order_001")
+	if !found {
+		t.Error("Set should reset TTL - order should still be alive")
+	}
+}
+
 // Benchmarks
 
 func BenchmarkCache_Set(b *testing.B) {
-	c := New(Config{MaxItems: 10000, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 10000, TTL: time.Hour})
 	defer c.Stop()
 
 	order := testutil.CreateTestOrder("bench")
@@ -417,7 +465,7 @@ func BenchmarkCache_Set(b *testing.B) {
 }
 
 func BenchmarkCache_Get(b *testing.B) {
-	c := New(Config{MaxItems: 10000, TTL: time.Hour})
+	c := New(config.CacheConfig{MaxItems: 10000, TTL: time.Hour})
 	defer c.Stop()
 
 	c.Set(testutil.CreateTestOrder("bench"))

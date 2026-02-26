@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
-	"order-service/internal/cache"
-	"order-service/internal/logger"
-	"order-service/internal/repo"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +13,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"order-service/internal/cache"
+	"order-service/internal/metrics"
+	"order-service/internal/repo"
 )
 
 const (
@@ -24,13 +27,13 @@ const (
 
 // Handler processes HTTP-requests via API
 type Handler struct {
-	cache     *cache.Cache
+	cache     cache.OrderCache
 	repo      repo.OrderRepo
 	startTime time.Time
 }
 
 // New returns new Handler instance
-func New(cache *cache.Cache, repo repo.OrderRepo) *Handler {
+func New(cache cache.OrderCache, repo repo.OrderRepo) *Handler {
 	return &Handler{
 		cache:     cache,
 		repo:      repo,
@@ -64,6 +67,7 @@ func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(myLogger)
+	r.Use(metrics.Middleware)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(cors.Handler(cors.Options{
@@ -82,6 +86,8 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/stats", h.getStats)
 
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("./web"))))
+
+	r.Handle("/metrics", promhttp.Handler())
 	return r
 }
 
@@ -102,7 +108,7 @@ func (h *Handler) getOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info("Fetching order details for: %s", orderUID)
+	slog.Info("fetching order details", "order_uid", orderUID)
 
 	start := time.Now()
 
@@ -117,11 +123,11 @@ func (h *Handler) getOrder(w http.ResponseWriter, r *http.Request) {
 		order, err = h.repo.GetOrder(r.Context(), orderUID)
 		if err != nil {
 			if errors.Is(err, repo.ErrOrderNotFound) {
-				logger.Warn("Order not found: %s", orderUID)
+				slog.Warn("order not found", "order_uid", orderUID)
 				h.errorResponse(w, http.StatusNotFound, "order not found")
 				return
 			}
-			logger.Error("DB Error: %v", err)
+			slog.Error("Database", "error", err)
 			h.errorResponse(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
@@ -131,11 +137,7 @@ func (h *Handler) getOrder(w http.ResponseWriter, r *http.Request) {
 
 	duration := time.Since(start)
 
-	if source == "cache" {
-		logger.Success("Retrieved from %s in %v ⚡\n", source, duration)
-	} else {
-		logger.Info("Retrieved from %s in %v 🗄️\n", source, duration)
-	}
+	slog.Info("order retrieved", "source", source, "duration", duration)
 
 	h.jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"order":  order,
@@ -156,23 +158,23 @@ func (h *Handler) deleteOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info("Deleting order: %s", orderUID)
+	slog.Info("deleting order", "order_uid", orderUID)
 
 	err := h.repo.DeleteOrder(r.Context(), orderUID)
 	if err != nil {
 		if errors.Is(err, repo.ErrOrderNotFound) {
-			logger.Warn("Order not found for deletion: %s", orderUID)
+			slog.Warn("delete order: order not found", "order_uid", orderUID)
 			h.errorResponse(w, http.StatusNotFound, "order not found")
 			return
 		}
-		logger.Error("Failed to delete order %s: %v", orderUID, err)
+		slog.Error("delete order", "order_uid", orderUID, "error", err)
 		h.errorResponse(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
-	// Remove from cache too
-	h.cache.Delete(orderUID)
-	logger.Success("Order deleted: %s", orderUID)
+	h.cache.Delete(orderUID) // Remove from cache too
+
+	slog.Info("order deleted", "order_uid", orderUID)
 
 	h.jsonResponse(w, http.StatusOK, map[string]string{
 		"status":    "deleted",
@@ -208,7 +210,7 @@ func (h *Handler) getOrderList(w http.ResponseWriter, r *http.Request) {
 
 	items, total, err := h.repo.GetOrderUIDs(ctx, limit, offset, sortAsc)
 	if err != nil {
-		logger.Error("Error getting order UIDs: %v", err)
+		slog.Error("getting order UIDs", "error", err)
 		h.errorResponse(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -263,7 +265,7 @@ func (h *Handler) healthCheck(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getStats(w http.ResponseWriter, r *http.Request) {
 	dbCount, err := h.repo.GetOrderCount(r.Context())
 	if err != nil {
-		logger.Error("Error getting order count: %v", err)
+		slog.Error("getting order count", "error", err)
 		dbCount = -1
 	}
 
@@ -295,7 +297,7 @@ func (h *Handler) jsonResponse(w http.ResponseWriter, status int, data interface
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		logger.Error("Failed to encode JSON response: %v", err)
+		slog.Error("encoding JSON response", "error", err)
 	}
 }
 

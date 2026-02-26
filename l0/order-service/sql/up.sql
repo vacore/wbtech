@@ -1,3 +1,5 @@
+-- Up migration: create all tables and indexes
+
 -- Orders table
 CREATE TABLE IF NOT EXISTS orders (
     order_uid VARCHAR(50) PRIMARY KEY,

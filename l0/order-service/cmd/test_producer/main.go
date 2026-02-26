@@ -9,7 +9,6 @@ import (
 	"io"
 	mrand "math/rand"
 	"net/http"
-	"order-service/internal/models"
 	"os"
 	"os/signal"
 	"strconv"
@@ -20,6 +19,8 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+
+	"order-service/internal/models"
 )
 
 const (
@@ -129,7 +130,15 @@ var (
 
 func main() {
 	cfg := loadConfig()
-	printBanner(cfg)
+
+	fmt.Printf("\n%s=== ORDER SERVICE SIMULATOR ===%s\n", Purple, Reset)
+	fmt.Printf("  Kafka:      %s (topic: %s)\n", cfg.KafkaBroker, cfg.KafkaTopic)
+	fmt.Printf("  Service:    %s\n", cfg.ServiceURL)
+	fmt.Printf("  Workers:    %d\n", cfg.Workers)
+	fmt.Printf("  Delay:      %s – %s\n", cfg.MinDelay, cfg.MaxDelay)
+	fmt.Printf("  Invalid:    %.0f%%\n", cfg.InvalidPct)
+	fmt.Printf("  Seed:       %d orders\n", cfg.SeedCount)
+	fmt.Println()
 
 	sim := NewSimulator(cfg)
 	defer sim.Close()
@@ -144,12 +153,12 @@ func main() {
 	// Wait for order-service to be ready
 	sim.waitForService(ctx)
 
-	// Seed phase — sequential, creates initial orders for update/read/delete
+	// Seed phase - sequential, creates initial orders for update/read/delete
 	sim.seed(ctx)
 
 	// Start workers
 	var wg sync.WaitGroup
-	sim.log(-1, Green, "🚀", "Starting %d workers (delay: %s–%s, invalid: %.0f%%)",
+	sim.log(-1, Green, "+OK", "Starting %d workers (delay: %s–%s, invalid: %.0f%%)",
 		cfg.Workers, cfg.MinDelay, cfg.MaxDelay, cfg.InvalidPct)
 	fmt.Println()
 
@@ -188,21 +197,6 @@ func loadConfig() SimConfig {
 	}
 }
 
-func printBanner(cfg SimConfig) {
-	fmt.Printf("\n%s", Purple)
-	fmt.Println("╔══════════════════════════════════════════════╗")
-	fmt.Println("║         ORDER SERVICE SIMULATOR              ║")
-	fmt.Println("╚══════════════════════════════════════════════╝")
-	fmt.Printf("%s", Reset)
-	fmt.Printf("  Kafka:      %s (topic: %s)\n", cfg.KafkaBroker, cfg.KafkaTopic)
-	fmt.Printf("  Service:    %s\n", cfg.ServiceURL)
-	fmt.Printf("  Workers:    %d\n", cfg.Workers)
-	fmt.Printf("  Delay:      %s – %s\n", cfg.MinDelay, cfg.MaxDelay)
-	fmt.Printf("  Invalid:    %.0f%%\n", cfg.InvalidPct)
-	fmt.Printf("  Seed:       %d orders\n", cfg.SeedCount)
-	fmt.Println()
-}
-
 func NewSimulator(cfg SimConfig) *Simulator {
 	return &Simulator{
 		writer: &kafka.Writer{
@@ -227,23 +221,36 @@ func (s *Simulator) Close() {
 
 func (s *Simulator) waitForService(ctx context.Context) {
 	for i := 0; i < 30; i++ {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.httpBase+"/health", nil)
+		if err != nil {
 			return
 		}
-		resp, err := s.httpClient.Get(s.httpBase + "/health")
+
+		resp, err := s.httpClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				s.log(-1, Green, "✅", "Service is ready at %s", s.httpBase)
+				s.log(-1, Green, "+OK", "Service is ready at %s", s.httpBase)
 				return
 			}
 		}
 		if i == 0 {
-			s.log(-1, Yellow, "⏳", "Waiting for service at %s...", s.httpBase)
+			s.log(-1, Yellow, "...", "Waiting for service at %s...", s.httpBase)
 		}
-		time.Sleep(time.Second)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
 	}
-	s.log(-1, Yellow, "⚠️ ", "Service may not be ready, proceeding anyway")
+	s.log(-1, Yellow, "WRN", "Service may not be ready, proceeding anyway")
 }
 
 func (s *Simulator) seed(ctx context.Context) {
@@ -273,12 +280,12 @@ func (s *Simulator) seed(ctx context.Context) {
 		s.mu.Unlock()
 
 		s.stats.Creates.Add(1)
-		s.log(-1, Green, "✅", "CREATE  %s (items:%d amt:%d %s)",
+		s.log(-1, Green, "+OK", "CREATE  %s (items:%d amt:%d %s)",
 			order.OrderUID, len(order.Items), order.Payment.Amount, order.Payment.Currency)
 	}
 
 	if err := s.writer.WriteMessages(ctx, msgs...); err != nil {
-		s.log(-1, Red, "❌", "SEED batch write failed: %v", err)
+		s.log(-1, Red, "ERR", "SEED batch write failed: %v", err)
 		return
 	}
 
@@ -384,7 +391,7 @@ func (s *Simulator) doCreate(ctx context.Context, rng *mrand.Rand, wid int) {
 			return
 		}
 		s.stats.Errors.Add(1)
-		s.log(wid, Red, "❌", "CREATE FAIL: %v", err)
+		s.log(wid, Red, "ERR", "CREATE FAIL: %v", err)
 		return
 	}
 
@@ -396,7 +403,7 @@ func (s *Simulator) doCreate(ctx context.Context, rng *mrand.Rand, wid int) {
 	s.mu.Unlock()
 
 	s.stats.Creates.Add(1)
-	s.log(wid, Green, "✅", "CREATE  %s (items:%d amt:%d %s)",
+	s.log(wid, Green, "+OK", "CREATE  %s (items:%d amt:%d %s)",
 		order.OrderUID, len(order.Items), order.Payment.Amount, order.Payment.Currency)
 }
 
@@ -420,16 +427,16 @@ func (s *Simulator) doRead(ctx context.Context, rng *mrand.Rand, wid int) {
 			return
 		}
 		s.stats.Errors.Add(1)
-		s.log(wid, Red, "❌", "READ FAIL: %v", err)
+		s.log(wid, Red, "ERR", "READ FAIL: %v", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		io.ReadAll(resp.Body)
-		// Order might have been deleted by another worker — not really an error
+		// Order might have been deleted by another worker - not really an error
 		s.stats.Reads.Add(1)
-		s.log(wid, Yellow, "📖", "READ    %s (HTTP %d — likely deleted)", uid, resp.StatusCode)
+		s.log(wid, Yellow, "DEL", "READ    %s (HTTP %d - likely deleted)", uid, resp.StatusCode)
 		return
 	}
 
@@ -438,17 +445,13 @@ func (s *Simulator) doRead(ctx context.Context, rng *mrand.Rand, wid int) {
 		Time   string `json:"time"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		s.log(wid, Yellow, "⚠️ ", "READ    %s (response decode error: %v)", uid, err)
+		s.log(wid, Yellow, "DEL", "READ    %s (response decode error: %v)", uid, err)
 		s.stats.Reads.Add(1)
 		return
 	}
 
 	s.stats.Reads.Add(1)
-	icon := "⚡"
-	if result.Source == "database" {
-		icon = "🗄️"
-	}
-	s.log(wid, Blue, "📖", "READ    %s (%s %s %s)", uid, result.Source, icon, result.Time)
+	s.log(wid, Blue, "GET", "READ    %s (%s %s)", uid, result.Source, result.Time)
 }
 
 func (s *Simulator) doUpdate(ctx context.Context, rng *mrand.Rand, wid int) {
@@ -480,12 +483,12 @@ func (s *Simulator) doUpdate(ctx context.Context, rng *mrand.Rand, wid int) {
 			return
 		}
 		s.stats.Errors.Add(1)
-		s.log(wid, Red, "❌", "UPDATE FAIL: %v", err)
+		s.log(wid, Red, "ERR", "UPDATE FAIL: %v", err)
 		return
 	}
 
 	s.stats.Updates.Add(1)
-	s.log(wid, Cyan, "🔄", "UPDATE  %s (%s)", order.OrderUID, modDesc)
+	s.log(wid, Cyan, "UPD", "UPDATE  %s (%s)", order.OrderUID, modDesc)
 }
 
 func (s *Simulator) doDelete(ctx context.Context, rng *mrand.Rand, wid int) {
@@ -507,7 +510,7 @@ func (s *Simulator) doDelete(ctx context.Context, rng *mrand.Rand, wid int) {
 			return
 		}
 		s.stats.Errors.Add(1)
-		s.log(wid, Red, "❌", "DELETE FAIL: %v", err)
+		s.log(wid, Red, "ERR", "DELETE FAIL: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -515,10 +518,10 @@ func (s *Simulator) doDelete(ctx context.Context, rng *mrand.Rand, wid int) {
 
 	if resp.StatusCode == http.StatusOK {
 		s.stats.Deletes.Add(1)
-		s.log(wid, Yellow, "🗑️ ", "DELETE  %s", target.UID)
+		s.log(wid, Yellow, "DEL", "DELETE  %s", target.UID)
 	} else {
 		s.stats.Errors.Add(1)
-		s.log(wid, Red, "❌", "DELETE HTTP %d: %s", resp.StatusCode, target.UID)
+		s.log(wid, Red, "ERR", "DELETE HTTP %d: %s", resp.StatusCode, target.UID)
 	}
 }
 
@@ -537,63 +540,19 @@ func (s *Simulator) doInvalidOp(ctx context.Context, rng *mrand.Rand, op string,
 	}
 }
 
-func (s *Simulator) doInvalidCreate(ctx context.Context, rng *mrand.Rand, wid int) {
-	var key, value, desc string
+// buildCorruptedOrder generates a valid order, applies corruption, and marshals to JSON.
+func (s *Simulator) buildCorruptedOrder(rng *mrand.Rand, corrupt func(*models.Order)) []byte {
+	order := s.generateOrder(rng)
+	corrupt(&order)
+	data, _ := json.Marshal(order)
+	return data
+}
 
-	switch rng.Intn(6) {
-	case 0:
-		key = "bad_json"
-		value = `{this is not valid json!!!}`
-		desc = "malformed JSON"
-	case 1:
-		key = "empty_uid"
-		value = `{"order_uid":"","track_number":"TEST12345","entry":"WBRU",` +
-			`"customer_id":"test","delivery":{"name":"Test","city":"Moscow","address":"St"},` +
-			`"payment":{"transaction":"t","currency":"RUB","payment_dt":1637907727,` +
-			`"amount":100,"goods_total":100},"items":[{"chrt_id":1,"name":"Test",` +
-			`"price":100,"sale":0,"total_price":100,"nm_id":1,"brand":"Test","status":200}],` +
-			`"date_created":"2024-01-01T00:00:00Z"}`
-		desc = "empty order_uid"
-	case 2:
-		key = "no_items"
-		value = `{"order_uid":"a1b2c3d4e5f6a7b8test","track_number":"TEST12345",` +
-			`"entry":"WBRU","customer_id":"test","delivery":{"name":"Test","city":"Moscow",` +
-			`"address":"St"},"payment":{"transaction":"t","currency":"RUB",` +
-			`"payment_dt":1637907727},"items":[],"date_created":"2024-01-01T00:00:00Z"}`
-		desc = "empty items"
-	case 3:
-		key = "neg_price"
-		value = `{"order_uid":"a1b2c3d4e5f6a7b8test","track_number":"TEST12345",` +
-			`"entry":"WBRU","customer_id":"test","delivery":{"name":"Test","city":"Moscow",` +
-			`"address":"St"},"payment":{"transaction":"t","currency":"RUB",` +
-			`"payment_dt":1637907727,"amount":-100,"goods_total":-100},` +
-			`"items":[{"chrt_id":1,"name":"Test","price":-100,"sale":0,"total_price":-100,` +
-			`"nm_id":1,"brand":"Test","status":200}],"date_created":"2024-01-01T00:00:00Z"}`
-		desc = "negative price"
-	case 4:
-		key = "bad_currency"
-		value = `{"order_uid":"a1b2c3d4e5f6a7b8test","track_number":"TEST12345",` +
-			`"entry":"WBRU","customer_id":"test","delivery":{"name":"Test","city":"Moscow",` +
-			`"address":"St"},"payment":{"transaction":"t","currency":"FAKE",` +
-			`"payment_dt":1637907727,"amount":100,"goods_total":100},` +
-			`"items":[{"chrt_id":1,"name":"Test","price":100,"sale":0,"total_price":100,` +
-			`"nm_id":1,"brand":"Test","status":200}],"date_created":"2024-01-01T00:00:00Z"}`
-		desc = "invalid currency"
-	case 5:
-		key = "amount_mismatch"
-		value = `{"order_uid":"a1b2c3d4e5f6a7b8test","track_number":"TEST12345",` +
-			`"entry":"WBRU","customer_id":"test","delivery":{"name":"Test","city":"Moscow",` +
-			`"address":"St"},"payment":{"transaction":"t","currency":"RUB",` +
-			`"payment_dt":1637907727,"amount":99999,"goods_total":100,"delivery_cost":0,` +
-			`"custom_fee":0},"items":[{"chrt_id":1,"name":"Test","price":100,"sale":0,` +
-			`"total_price":100,"nm_id":1,"brand":"Test","status":200}],` +
-			`"date_created":"2024-01-01T00:00:00Z"}`
-		desc = "amount mismatch"
-	}
-
+// sendInvalidMessage sends an invalid message to Kafka and records stats.
+func (s *Simulator) sendInvalidMessage(ctx context.Context, wid int, op, key string, value []byte, desc string) {
 	err := s.writer.WriteMessages(ctx, kafka.Message{
 		Key:   []byte(key),
-		Value: []byte(value),
+		Value: value,
 	})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -604,7 +563,126 @@ func (s *Simulator) doInvalidCreate(ctx context.Context, rng *mrand.Rand, wid in
 	}
 
 	s.stats.InvalidOps.Add(1)
-	s.log(wid, Purple, "🚫", "INV.CREATE: %s", desc)
+	s.log(wid, Purple, "INV", "INV.%-6s %s", op, desc)
+}
+
+func (s *Simulator) doInvalidCreate(ctx context.Context, rng *mrand.Rand, wid int) {
+	var key, desc string
+	var value []byte
+
+	switch rng.Intn(6) {
+	case 0:
+		// Raw broken bytes
+		key = "bad_json"
+		value = []byte(`{this is not valid json!!!}`)
+		desc = "malformed JSON"
+
+	case 1:
+		key = "empty_uid"
+		value = s.buildCorruptedOrder(rng, func(o *models.Order) {
+			o.OrderUID = ""
+			o.Payment.Transaction = ""
+		})
+		desc = "empty order_uid"
+
+	case 2:
+		key = "no_items"
+		value = s.buildCorruptedOrder(rng, func(o *models.Order) {
+			o.Items = []models.Item{}
+			o.Payment.GoodsTotal = 0
+			o.Payment.Amount = o.Payment.DeliveryCost + o.Payment.CustomFee
+		})
+		desc = "empty items"
+
+	case 3:
+		key = "neg_price"
+		value = s.buildCorruptedOrder(rng, func(o *models.Order) {
+			for i := range o.Items {
+				o.Items[i].Price = -100
+				o.Items[i].TotalPrice = -100
+			}
+			o.Payment.GoodsTotal = -100 * len(o.Items)
+			o.Payment.Amount = o.Payment.GoodsTotal + o.Payment.DeliveryCost + o.Payment.CustomFee
+		})
+		desc = "negative price"
+
+	case 4:
+		key = "bad_currency"
+		value = s.buildCorruptedOrder(rng, func(o *models.Order) {
+			o.Payment.Currency = "FAKE"
+		})
+		desc = "invalid currency"
+
+	case 5:
+		key = "amount_mismatch"
+		value = s.buildCorruptedOrder(rng, func(o *models.Order) {
+			o.Payment.Amount = o.Payment.Amount + 99999
+		})
+		desc = "amount mismatch"
+	}
+
+	s.sendInvalidMessage(ctx, wid, "CREATE", key, value, desc)
+}
+
+func (s *Simulator) doInvalidUpdate(ctx context.Context, rng *mrand.Rand, wid int) {
+	target := s.pickRandomTrackedOrder(rng)
+
+	var key, desc string
+	var value []byte
+
+	if target != nil {
+		switch rng.Intn(3) {
+		case 0:
+			// Raw broken bytes - intentionally not generated from a struct
+			key = target.UID
+			value = []byte(`{completely broken json for update`)
+			desc = fmt.Sprintf("malformed JSON for %s", truncate(target.UID, 20))
+
+		case 1:
+			key = target.UID
+			value = s.buildCorruptedOrder(rng, func(o *models.Order) {
+				o.OrderUID = target.UID
+				o.Payment.Transaction = target.UID
+				o.TrackNumber = target.TrackNumber
+				o.Items = []models.Item{}
+				o.Payment.GoodsTotal = 0
+				o.Payment.Amount = o.Payment.DeliveryCost + o.Payment.CustomFee
+			})
+			desc = fmt.Sprintf("empty items for %s", truncate(target.UID, 20))
+
+		case 2:
+			key = target.UID
+			value = s.buildCorruptedOrder(rng, func(o *models.Order) {
+				o.OrderUID = target.UID
+				o.Entry = "INVALID"
+				o.CustomerID = ""
+				o.Delivery.Name = ""
+				o.Delivery.City = ""
+				o.Delivery.Address = ""
+				o.Payment.Transaction = ""
+				o.Payment.Currency = "XXX"
+				o.Payment.PaymentDT = 0
+				o.Items = []models.Item{{
+					ChrtID:     -1,
+					Name:       "",
+					Price:      -500,
+					Sale:       200,
+					TotalPrice: -500,
+					NmID:       0,
+					Brand:      "",
+					Status:     999,
+				}}
+			})
+			desc = fmt.Sprintf("all-invalid fields for %s", truncate(target.UID, 20))
+		}
+	} else {
+		// No tracked orders to target - send garbage
+		key = "orphan_update"
+		value = []byte(`{not even json`)
+		desc = "orphan malformed update"
+	}
+
+	s.sendInvalidMessage(ctx, wid, "UPDATE", key, value, desc)
 }
 
 func (s *Simulator) doInvalidRead(ctx context.Context, rng *mrand.Rand, wid int) {
@@ -641,61 +719,7 @@ func (s *Simulator) doInvalidRead(ctx context.Context, rng *mrand.Rand, wid int)
 	io.ReadAll(resp.Body)
 
 	s.stats.InvalidOps.Add(1)
-	s.log(wid, Purple, "🚫", "INV.READ:   %s (HTTP %d)", desc, resp.StatusCode)
-}
-
-func (s *Simulator) doInvalidUpdate(ctx context.Context, rng *mrand.Rand, wid int) {
-	target := s.pickRandomTrackedOrder(rng)
-
-	var key, value, desc string
-
-	if target != nil {
-		switch rng.Intn(3) {
-		case 0:
-			key = target.UID
-			value = `{completely broken json for update`
-			desc = fmt.Sprintf("malformed JSON for %s", truncate(target.UID, 20))
-		case 1:
-			key = target.UID
-			value = fmt.Sprintf(
-				`{"order_uid":"%s","track_number":"TEST12345","entry":"WBRU",`+
-					`"customer_id":"test","delivery":{"name":"Test","city":"Moscow",`+
-					`"address":"St"},"payment":{"transaction":"%s","currency":"RUB",`+
-					`"payment_dt":1637907727},"items":[],"date_created":"2024-01-01T00:00:00Z"}`,
-				target.UID, target.UID)
-			desc = fmt.Sprintf("empty items for %s", truncate(target.UID, 20))
-		case 2:
-			key = target.UID
-			value = fmt.Sprintf(
-				`{"order_uid":"%s","track_number":"TEST12345","entry":"INVALID",`+
-					`"customer_id":"","delivery":{"name":"","city":"","address":""},`+
-					`"payment":{"transaction":"","currency":"XXX","payment_dt":0},`+
-					`"items":[{"chrt_id":-1,"name":"","price":-500,"sale":200,`+
-					`"total_price":-500,"nm_id":0,"brand":"","status":999}],`+
-					`"date_created":"2024-01-01T00:00:00Z"}`,
-				target.UID)
-			desc = fmt.Sprintf("all-invalid fields for %s", truncate(target.UID, 20))
-		}
-	} else {
-		key = "orphan_update"
-		value = `{not even json`
-		desc = "orphan malformed update"
-	}
-
-	err := s.writer.WriteMessages(ctx, kafka.Message{
-		Key:   []byte(key),
-		Value: []byte(value),
-	})
-	if err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		s.stats.Errors.Add(1)
-		return
-	}
-
-	s.stats.InvalidOps.Add(1)
-	s.log(wid, Purple, "🚫", "INV.UPDATE: %s", desc)
+	s.log(wid, Purple, "INV", "INV.READ:   %s (HTTP %d)", desc, resp.StatusCode)
 }
 
 func (s *Simulator) doInvalidDelete(ctx context.Context, rng *mrand.Rand, wid int) {
@@ -732,7 +756,7 @@ func (s *Simulator) doInvalidDelete(ctx context.Context, rng *mrand.Rand, wid in
 	io.ReadAll(resp.Body)
 
 	s.stats.InvalidOps.Add(1)
-	s.log(wid, Purple, "🚫", "INV.DELETE: %s (HTTP %d)", desc, resp.StatusCode)
+	s.log(wid, Purple, "INV", "INV.DELETE: %s (HTTP %d)", desc, resp.StatusCode)
 }
 
 // Order generation
@@ -952,23 +976,21 @@ func (s *Simulator) printFinalStats(elapsed time.Duration) {
 
 	opsPerSec := float64(total) / elapsed.Seconds()
 
-	fmt.Printf("\n%s╔══════════════════════════════════════════════╗%s\n", Purple, Reset)
-	fmt.Printf("%s║           SIMULATION SUMMARY                  ║%s\n", Purple, Reset)
-	fmt.Printf("%s╚══════════════════════════════════════════════╝%s\n", Purple, Reset)
+	fmt.Printf("%s=== SIMULATION SUMMARY ===%s\n", Purple, Reset)
 	fmt.Printf("  Duration:    %s\n", elapsed.Round(time.Second))
 	fmt.Printf("  Throughput:  %.1f ops/sec\n\n", opsPerSec)
-	fmt.Printf("  %s✅ Creates:  %5d  (%s)%s\n", Green, c, pct(c, total), Reset)
-	fmt.Printf("  %s📖 Reads:    %5d  (%s)%s\n", Blue, r, pct(r, total), Reset)
-	fmt.Printf("  %s🔄 Updates:  %5d  (%s)%s\n", Cyan, u, pct(u, total), Reset)
-	fmt.Printf("  %s🗑️  Deletes:  %5d  (%s)%s\n", Yellow, d, pct(d, total), Reset)
-	fmt.Printf("  %s🚫 Invalid:  %5d  (%s)%s\n", Purple, inv, pct(inv, total), Reset)
-	fmt.Printf("  %s❌ Errors:   %5d%s\n", Red, errs, Reset)
+	fmt.Printf("  %s Creates:  %5d  (%s)%s\n", Green, c, pct(c, total), Reset)
+	fmt.Printf("  %s Reads:    %5d  (%s)%s\n", Blue, r, pct(r, total), Reset)
+	fmt.Printf("  %s Updates:  %5d  (%s)%s\n", Cyan, u, pct(u, total), Reset)
+	fmt.Printf("  %s Deletes:  %5d  (%s)%s\n", Yellow, d, pct(d, total), Reset)
+	fmt.Printf("  %s Invalid:  %5d  (%s)%s\n", Purple, inv, pct(inv, total), Reset)
+	fmt.Printf("  %s Errors:   %5d%s\n", Red, errs, Reset)
 	fmt.Printf("  %s── Total:   %5d%s\n", Gray, total, Reset)
 	fmt.Printf("  %s── Pool:    %5d orders%s\n", Gray, pool, Reset)
 	fmt.Println()
 }
 
-func (s *Simulator) log(workerID int, color, icon, format string, args ...interface{}) {
+func (s *Simulator) log(workerID int, color, tag, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	ts := time.Now().Format("15:04:05")
 
@@ -979,7 +1001,7 @@ func (s *Simulator) log(workerID int, color, icon, format string, args ...interf
 		prefix = fmt.Sprintf("W%02d", workerID)
 	}
 
-	line := fmt.Sprintf("%s %s[%s] %s %s%s\n", ts, color, prefix, icon, msg, Reset)
+	line := fmt.Sprintf("%s %s[%s] [%-3s] %s%s\n", ts, color, prefix, tag, msg, Reset)
 
 	s.printMu.Lock()
 	fmt.Print(line)

@@ -1,10 +1,7 @@
 package kafka
 
-// PermanentError wraps errors that should not be retried (invalid JSON, validation failures)
-// Transient errors (DB down, network) are returned as-is.
-type PermanentError struct {
-	Err error
-}
+import "errors"
 
-func (e *PermanentError) Error() string { return e.Err.Error() }
-func (e *PermanentError) Unwrap() error { return e.Err }
+// ErrPermanent marks errors that should not be retried (invalid JSON, validation failures).
+// Transient errors (DB down, network) are returned without this sentinel.
+var ErrPermanent = errors.New("permanent")

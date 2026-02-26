@@ -69,7 +69,7 @@ type Item struct {
 // Regexps for validation
 var (
 	// order_uid: 16 hex chars, optionally with "test" postfix
-	// Examples: "a1b2c3d4e5f6a7b8" или "a1b2c3d4e5f6a7b8test"
+	// Examples: "order_001" or "a1b2c3d4e5f6a7b8test"
 	orderUIDRegex = regexp.MustCompile(`^[a-f0-9]{16}(test)?$`)
 
 	// Email
@@ -378,7 +378,7 @@ func ParseOrder(data []byte) (*Order, error) {
 		return nil, fmt.Errorf("invalid JSON format: %w", err)
 	}
 	if err := order.Validate(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("validating order: %w", err)
 	}
 	return &order, nil
 }

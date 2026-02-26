@@ -10,7 +10,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./sql:/docker-entrypoint-initdb.d
+      - ./sql/up.sql:/docker-entrypoint-initdb.d/01_up.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orders_user -d orders_db"]
       interval: 5s
@@ -61,6 +61,7 @@ services:
     ports:
       - "8081:8081"
     environment:
+      LOG_LEVEL: "${LOG_LEVEL:-info}"    # debug | info | warn | error
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: orders_user
@@ -68,10 +69,14 @@ services:
       DB_NAME: orders_db
       KAFKA_BROKERS: kafka:29092
       KAFKA_TOPIC: orders
+      KAFKA_DLQ_TOPIC: orders-dlq
       KAFKA_GROUP_ID: orders-service
       HTTP_PORT: 8081
       CACHE_MAX_ITEMS: "${CACHE_MAX_ITEMS:-1000}"
       CACHE_TTL: "${CACHE_TTL:-30m}"
+      METRICS_ENABLED: "true"   # enable /metrics endpoint
+      TRACING_ENABLED: "false"  # enable OpenTelemetry tracing
+      TRACING_EXPORTER: "noop"  # trace exporter: stdout, noop
     depends_on:
       postgres:
         condition: service_healthy

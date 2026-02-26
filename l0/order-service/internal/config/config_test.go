@@ -21,158 +21,136 @@ func TestLoad_Defaults(t *testing.T) {
 	cfg := Load()
 
 	// Check defaults
-	if cfg.DBHost != "localhost" {
-		t.Errorf("Expected DBHost=localhost, got %s", cfg.DBHost)
+	if cfg.DB.Host != "localhost" {
+		t.Errorf("Expected DBHost=localhost, got %s", cfg.DB.Host)
 	}
-	if cfg.DBPort != 5432 {
-		t.Errorf("Expected DBPort=5432, got %d", cfg.DBPort)
+	if cfg.DB.Port != 5432 {
+		t.Errorf("Expected DBPort=5432, got %d", cfg.DB.Port)
 	}
-	if cfg.DBUser != "orders_user" {
-		t.Errorf("Expected DBUser=orders_user, got %s", cfg.DBUser)
+	if cfg.DB.User != "orders_user" {
+		t.Errorf("Expected DBUser=orders_user, got %s", cfg.DB.User)
 	}
-	if cfg.DBPassword != "orders_password" {
-		t.Errorf("Expected DBPassword=orders_password, got %s", cfg.DBPassword)
+	if cfg.DB.Password != "orders_password" {
+		t.Errorf("Expected DBPassword=orders_password, got %s", cfg.DB.Password)
 	}
-	if cfg.DBName != "orders_db" {
-		t.Errorf("Expected DBName=orders_db, got %s", cfg.DBName)
+	if cfg.DB.Name != "orders_db" {
+		t.Errorf("Expected DBName=orders_db, got %s", cfg.DB.Name)
 	}
-	if cfg.DBMaxConns != 10 {
-		t.Errorf("Expected DBMaxConns=10, got %d", cfg.DBMaxConns)
+	if cfg.DB.MaxConns != 10 {
+		t.Errorf("Expected DBMaxConns=10, got %d", cfg.DB.MaxConns)
 	}
-	if cfg.DBMinConns != 2 {
-		t.Errorf("Expected DBMinConns=2, got %d", cfg.DBMinConns)
+	if cfg.DB.MinConns != 2 {
+		t.Errorf("Expected DBMinConns=2, got %d", cfg.DB.MinConns)
 	}
-	if len(cfg.KafkaBrokers) != 1 || cfg.KafkaBrokers[0] != "localhost:9092" {
-		t.Errorf("Expected KafkaBrokers=[localhost:9092], got %v", cfg.KafkaBrokers)
+	if len(cfg.Kafka.Brokers) != 1 || cfg.Kafka.Brokers[0] != "localhost:9092" {
+		t.Errorf("Expected KafkaBrokers=[localhost:9092], got %v", cfg.Kafka.Brokers)
 	}
-	if cfg.KafkaTopic != "orders" {
-		t.Errorf("Expected KafkaTopic=orders, got %s", cfg.KafkaTopic)
+	if cfg.Kafka.Topic != "orders" {
+		t.Errorf("Expected KafkaTopic=orders, got %s", cfg.Kafka.Topic)
 	}
-	if cfg.KafkaGroupId != "orders-service" {
-		t.Errorf("Expected KafkaGroupId=orders-service, got %s", cfg.KafkaGroupId)
+	if cfg.Kafka.GroupID != "orders-service" {
+		t.Errorf("Expected KafkaGroupId=orders-service, got %s", cfg.Kafka.GroupID)
 	}
-	if cfg.HTTPPort != "8081" {
-		t.Errorf("Expected HTTPPort=8081, got %s", cfg.HTTPPort)
+	if cfg.HTTP.Port != "8081" {
+		t.Errorf("Expected HTTPPort=8081, got %s", cfg.HTTP.Port)
 	}
-	if cfg.CacheMaxItems != 1000 {
-		t.Errorf("Expected CacheMaxItems=1000, got %d", cfg.CacheMaxItems)
+	if cfg.Cache.MaxItems != 1000 {
+		t.Errorf("Expected CacheMaxItems=1000, got %d", cfg.Cache.MaxItems)
 	}
-	if cfg.CacheTTL != 30*time.Minute {
-		t.Errorf("Expected CacheTTL=30m, got %v", cfg.CacheTTL)
+	if cfg.Cache.TTL != 30*time.Minute {
+		t.Errorf("Expected CacheTTL=30m, got %v", cfg.Cache.TTL)
 	}
 }
 
 func TestLoad_FromEnv(t *testing.T) {
 	// Set custom env vars
-	os.Setenv("DB_HOST", "custom-host")
-	os.Setenv("DB_PORT", "5433")
-	os.Setenv("DB_USER", "custom_user")
-	os.Setenv("DB_PASSWORD", "custom_pass")
-	os.Setenv("DB_NAME", "custom_db")
-	os.Setenv("DB_MAX_CONNS", "20")
-	os.Setenv("DB_MIN_CONNS", "5")
-	os.Setenv("KAFKA_BROKERS", "kafka:9092")
-	os.Setenv("KAFKA_TOPIC", "custom-topic")
-	os.Setenv("KAFKA_GROUP_ID", "custom-group")
-	os.Setenv("HTTP_PORT", "9090")
-	os.Setenv("CACHE_MAX_ITEMS", "500")
-	os.Setenv("CACHE_TTL", "1h")
-
-	defer func() {
-		os.Unsetenv("DB_HOST")
-		os.Unsetenv("DB_PORT")
-		os.Unsetenv("DB_USER")
-		os.Unsetenv("DB_PASSWORD")
-		os.Unsetenv("DB_NAME")
-		os.Unsetenv("DB_MAX_CONNS")
-		os.Unsetenv("DB_MIN_CONNS")
-		os.Unsetenv("KAFKA_BROKERS")
-		os.Unsetenv("KAFKA_TOPIC")
-		os.Unsetenv("KAFKA_GROUP_ID")
-		os.Unsetenv("HTTP_PORT")
-		os.Unsetenv("CACHE_MAX_ITEMS")
-		os.Unsetenv("CACHE_TTL")
-	}()
+	t.Setenv("DB_HOST", "custom-host")
+	t.Setenv("DB_PORT", "5433")
+	t.Setenv("DB_USER", "custom_user")
+	t.Setenv("DB_PASSWORD", "custom_pass")
+	t.Setenv("DB_NAME", "custom_db")
+	t.Setenv("DB_MAX_CONNS", "20")
+	t.Setenv("DB_MIN_CONNS", "5")
+	t.Setenv("KAFKA_BROKERS", "kafka:9092")
+	t.Setenv("KAFKA_TOPIC", "custom-topic")
+	t.Setenv("KAFKA_GROUP_ID", "custom-group")
+	t.Setenv("HTTP_PORT", "9090")
+	t.Setenv("CACHE_MAX_ITEMS", "500")
+	t.Setenv("CACHE_TTL", "1h")
 
 	cfg := Load()
 
-	if cfg.DBHost != "custom-host" {
-		t.Errorf("Expected DBHost=custom-host, got %s", cfg.DBHost)
+	if cfg.DB.Host != "custom-host" {
+		t.Errorf("Expected DBHost=custom-host, got %s", cfg.DB.Host)
 	}
-	if cfg.DBPort != 5433 {
-		t.Errorf("Expected DBPort=5433, got %d", cfg.DBPort)
+	if cfg.DB.Port != 5433 {
+		t.Errorf("Expected DBPort=5433, got %d", cfg.DB.Port)
 	}
-	if cfg.DBUser != "custom_user" {
-		t.Errorf("Expected DBUser=custom_user, got %s", cfg.DBUser)
+	if cfg.DB.User != "custom_user" {
+		t.Errorf("Expected DBUser=custom_user, got %s", cfg.DB.User)
 	}
-	if cfg.DBPassword != "custom_pass" {
-		t.Errorf("Expected DBPassword=custom_pass, got %s", cfg.DBPassword)
+	if cfg.DB.Password != "custom_pass" {
+		t.Errorf("Expected DBPassword=custom_pass, got %s", cfg.DB.Password)
 	}
-	if cfg.DBName != "custom_db" {
-		t.Errorf("Expected DBName=custom_db, got %s", cfg.DBName)
+	if cfg.DB.Name != "custom_db" {
+		t.Errorf("Expected DBName=custom_db, got %s", cfg.DB.Name)
 	}
-	if cfg.DBMaxConns != 20 {
-		t.Errorf("Expected DBMaxConns=20, got %d", cfg.DBMaxConns)
+	if cfg.DB.MaxConns != 20 {
+		t.Errorf("Expected DBMaxConns=20, got %d", cfg.DB.MaxConns)
 	}
-	if cfg.DBMinConns != 5 {
-		t.Errorf("Expected DBMinConns=5, got %d", cfg.DBMinConns)
+	if cfg.DB.MinConns != 5 {
+		t.Errorf("Expected DBMinConns=5, got %d", cfg.DB.MinConns)
 	}
-	if cfg.KafkaBrokers[0] != "kafka:9092" {
-		t.Errorf("Expected KafkaBrokers=[kafka:9092], got %v", cfg.KafkaBrokers)
+	if cfg.Kafka.Brokers[0] != "kafka:9092" {
+		t.Errorf("Expected KafkaBrokers=[kafka:9092], got %v", cfg.Kafka.Brokers)
 	}
-	if cfg.KafkaTopic != "custom-topic" {
-		t.Errorf("Expected KafkaTopic=custom-topic, got %s", cfg.KafkaTopic)
+	if cfg.Kafka.Topic != "custom-topic" {
+		t.Errorf("Expected KafkaTopic=custom-topic, got %s", cfg.Kafka.Topic)
 	}
-	if cfg.KafkaGroupId != "custom-group" {
-		t.Errorf("Expected KafkaGroupId=custom-group, got %s", cfg.KafkaGroupId)
+	if cfg.Kafka.GroupID != "custom-group" {
+		t.Errorf("Expected KafkaGroupId=custom-group, got %s", cfg.Kafka.GroupID)
 	}
-	if cfg.HTTPPort != "9090" {
-		t.Errorf("Expected HTTPPort=9090, got %s", cfg.HTTPPort)
+	if cfg.HTTP.Port != "9090" {
+		t.Errorf("Expected HTTPPort=9090, got %s", cfg.HTTP.Port)
 	}
-	if cfg.CacheMaxItems != 500 {
-		t.Errorf("Expected CacheMaxItems=500, got %d", cfg.CacheMaxItems)
+	if cfg.Cache.MaxItems != 500 {
+		t.Errorf("Expected CacheMaxItems=500, got %d", cfg.Cache.MaxItems)
 	}
-	if cfg.CacheTTL != time.Hour {
-		t.Errorf("Expected CacheTTL=1h, got %v", cfg.CacheTTL)
+	if cfg.Cache.TTL != time.Hour {
+		t.Errorf("Expected CacheTTL=1h, got %v", cfg.Cache.TTL)
 	}
 }
 
 func TestLoad_InvalidIntFallsBackToDefault(t *testing.T) {
-	os.Setenv("DB_PORT", "invalid")
-	os.Setenv("CACHE_MAX_ITEMS", "not-a-number")
-	os.Setenv("DB_MAX_CONNS", "abc")
-	os.Setenv("DB_MIN_CONNS", "xyz")
-	defer func() {
-		os.Unsetenv("DB_PORT")
-		os.Unsetenv("CACHE_MAX_ITEMS")
-		os.Unsetenv("DB_MAX_CONNS")
-		os.Unsetenv("DB_MIN_CONNS")
-	}()
+	t.Setenv("DB_PORT", "invalid")
+	t.Setenv("CACHE_MAX_ITEMS", "not-a-number")
+	t.Setenv("DB_MAX_CONNS", "abc")
+	t.Setenv("DB_MIN_CONNS", "xyz")
 
 	cfg := Load()
 
-	if cfg.DBPort != 5432 {
-		t.Errorf("Expected DBPort=5432 (default), got %d", cfg.DBPort)
+	if cfg.DB.Port != 5432 {
+		t.Errorf("Expected DBPort=5432 (default), got %d", cfg.DB.Port)
 	}
-	if cfg.CacheMaxItems != 1000 {
-		t.Errorf("Expected CacheMaxItems=1000 (default), got %d", cfg.CacheMaxItems)
+	if cfg.Cache.MaxItems != 1000 {
+		t.Errorf("Expected CacheMaxItems=1000 (default), got %d", cfg.Cache.MaxItems)
 	}
-	if cfg.DBMaxConns != 10 {
-		t.Errorf("Expected DBMaxConns=10 (default), got %d", cfg.DBMaxConns)
+	if cfg.DB.MaxConns != 10 {
+		t.Errorf("Expected DBMaxConns=10 (default), got %d", cfg.DB.MaxConns)
 	}
-	if cfg.DBMinConns != 2 {
-		t.Errorf("Expected DBMinConns=2 (default), got %d", cfg.DBMinConns)
+	if cfg.DB.MinConns != 2 {
+		t.Errorf("Expected DBMinConns=2 (default), got %d", cfg.DB.MinConns)
 	}
 }
 
 func TestLoad_InvalidDurationFallsBackToDefault(t *testing.T) {
-	os.Setenv("CACHE_TTL", "invalid-duration")
+	t.Setenv("CACHE_TTL", "invalid-duration")
 	defer os.Unsetenv("CACHE_TTL")
 
 	cfg := Load()
 
-	if cfg.CacheTTL != 30*time.Minute {
-		t.Errorf("Expected CacheTTL=30m (default), got %v", cfg.CacheTTL)
+	if cfg.Cache.TTL != 30*time.Minute {
+		t.Errorf("Expected CacheTTL=30m (default), got %v", cfg.Cache.TTL)
 	}
 }
 
@@ -214,7 +192,7 @@ func TestGetEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.setEnv {
-				os.Setenv(tt.key, tt.envValue)
+				t.Setenv(tt.key, tt.envValue)
 				defer os.Unsetenv(tt.key)
 			}
 
@@ -280,7 +258,7 @@ func TestGetEnvAsInt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.setEnv {
-				os.Setenv(tt.key, tt.envValue)
+				t.Setenv(tt.key, tt.envValue)
 				defer os.Unsetenv(tt.key)
 			}
 
@@ -354,7 +332,7 @@ func TestGetEnvAsDuration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.setEnv {
-				os.Setenv(tt.key, tt.envValue)
+				t.Setenv(tt.key, tt.envValue)
 				defer os.Unsetenv(tt.key)
 			}
 

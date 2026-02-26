@@ -2,8 +2,9 @@ package repo
 
 import (
 	"context"
-	"order-service/internal/models"
 	"time"
+
+	"order-service/internal/models"
 )
 
 // OrderListItem is a lightweight summary returned by list queries
@@ -21,6 +22,3 @@ type OrderRepo interface {
 	GetOrderCount(ctx context.Context) (int64, error)
 	DeleteOrder(ctx context.Context, orderUID string) error
 }
-
-// Ensure Repo implements OrderRepo
-var _ OrderRepo = (*Repo)(nil)

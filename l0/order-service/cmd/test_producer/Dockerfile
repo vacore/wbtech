@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build  \
     -o /producer                       \
     ./cmd/test_producer
 
-FROM alpine:latest
+FROM alpine:3.21
 
 RUN apk --no-cache add ca-certificates
 

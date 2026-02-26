@@ -2,87 +2,106 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/lmittmann/tint"
+
 	"order-service/internal/cache"
 	"order-service/internal/config"
 	"order-service/internal/handler"
 	"order-service/internal/kafka"
-	"order-service/internal/logger"
 	"order-service/internal/repo"
-	"os"
-	"os/signal"
-	"sync"
-	"syscall"
-	"time"
+	"order-service/internal/tracing"
 )
 
 func main() {
-	logger.Title("Order Service Starting")
-
 	cfg := config.Load()
+
+	logLevel := parseLogLevel(cfg.Log.Level)
+	setupLogger(logLevel)
+
+	slog.Info("=== ORDER SERVICE STARTING ===")
+
+	// Init tracing
+	shutdownTracer, err := tracing.Init("order-service", cfg.Tracing.Exporter)
+	if err != nil {
+		slog.Error("failed to init tracing", "error", err)
+		os.Exit(1)
+	}
+	defer func() { // use separate context
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := shutdownTracer(shutdownCtx); err != nil {
+			slog.Error("failed to shut down tracer", "error", err)
+		}
+	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var wg sync.WaitGroup
 
-	logger.Title("Database Connection")
-	logger.Info("Connecting to PostgreSQL at %s:%d...", cfg.DBHost, cfg.DBPort)
+	slog.Info("=== DATABASE CONNECTION ===")
+	slog.Info("connecting to PostgreSQL", "host", cfg.DB.Host, "port", cfg.DB.Port)
 
-	orderRepo, err := repo.New(ctx, cfg)
+	orderRepo, err := repo.New(ctx, cfg.DB)
 	if err != nil {
-		logger.Error("Failed to connect to PostgreSQL: %v", err)
+		slog.Error("connecting to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	defer orderRepo.Close()
-	logger.Success("Connected to PostgreSQL (pool: min=%d, max=%d)", cfg.DBMinConns, cfg.DBMaxConns)
+	slog.Info("connected to PostgreSQL", "min_conns", cfg.DB.MinConns, "max_conns", cfg.DB.MaxConns)
 
-	logger.Title("Cache Initialization")
-	cacheConfig := cache.Config{
-		MaxItems: cfg.CacheMaxItems,
-		TTL:      cfg.CacheTTL,
-	}
-	orderCache := cache.New(cacheConfig)
+	slog.Info("=== CACHE INITIALIZATION ===")
+	orderCache := cache.New(cfg.Cache)
 	defer orderCache.Stop()
-	logger.Info("LRU Cache created: max_items=%d, ttl=%v", cfg.CacheMaxItems, cfg.CacheTTL)
+	slog.Info("cache created", "max_items", cfg.Cache.MaxItems, "ttl", cfg.Cache.TTL)
 
-	logger.Info("Restoring cache from database (limit: %d)...", cfg.CacheMaxItems)
-	orders, err := orderRepo.GetAllOrders(ctx, cfg.CacheMaxItems)
+	slog.Info("filling from the database", "limit", cfg.Cache.MaxItems)
+	orders, err := orderRepo.GetAllOrders(ctx, cfg.Cache.MaxItems)
 	if err != nil {
-		logger.Warn("Failed to restore cache from DB: %v", err)
+		slog.Warn("filling cache from the DB", "error", err)
 	} else {
 		orderCache.LoadFromSlice(orders)
-		logger.Success("Cache restored: %d orders loaded", orderCache.Size())
+		slog.Info("cache filled", "orders_loaded", orderCache.Size())
 	}
 
-	logger.Title("Kafka Consumer")
-	logger.Info("Connecting to Kafka at %s...", cfg.KafkaBrokers[0])
-	consumer := kafka.NewConsumer(cfg, orderRepo, orderCache)
+	slog.Info("=== KAFKA CONSUMER ===")
+	slog.Info("connecting to Kafka", "at", cfg.Kafka.Brokers[0])
+	consumer := kafka.NewConsumer(cfg.Kafka, orderRepo, orderCache)
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		consumer.Start(ctx)
 	}()
-	logger.Success("Kafka consumer started (topic: %s, group: %s)", cfg.KafkaTopic, cfg.KafkaGroupId)
+	slog.Info("Kafka consumer started", "topic", cfg.Kafka.Topic, "group", cfg.Kafka.GroupID)
 
-	logger.Title("HTTP Server")
+	slog.Info("=== HTTP Server ===")
 	h := handler.New(orderCache, orderRepo)
 	server := &http.Server{
-		Addr:         ":" + cfg.HTTPPort,
-		Handler:      h.Router(),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:           ":" + cfg.HTTP.Port,
+		Handler:        h.Router(),
+		ReadTimeout:    15 * time.Second,
+		WriteTimeout:   15 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1MiB,
 	}
 
-	ln, err := net.Listen("tcp", ":"+cfg.HTTPPort)
+	ln, err := net.Listen("tcp", ":"+cfg.HTTP.Port)
 	if err != nil {
-		logger.Error("Failed to bind port %s: %v", cfg.HTTPPort, err)
+		slog.Error("failed to bind port", "port", cfg.HTTP.Port, "error", err)
 		os.Exit(1)
 	}
-	logger.Success("HTTP server listening on http://localhost:%s", cfg.HTTPPort)
+	slog.Info("HTTP server listening", "on", "http://localhost:"+cfg.HTTP.Port)
 
 	// Channel to catch start-up errors from HTTP server
 	errChan := make(chan error, 1)
@@ -91,13 +110,13 @@ func main() {
 	go func() {
 		defer wg.Done()
 		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
-			logger.Error("HTTP server error: %v", err)
+			slog.Error("HTTP server", "error", err)
 			errChan <- err // Signal main to exit
 		}
 	}()
 
-	logger.Title("Service Ready")
-	logger.Success("Order Service is running. Press Ctrl+C to stop.")
+	slog.Info("=== SERVICE READY ===")
+	slog.Info("Order service is running. Press Ctrl+C to stop.")
 
 	// Channel to catch OS shutdown signals
 	sigChan := make(chan os.Signal, 1)
@@ -106,32 +125,32 @@ func main() {
 	// Now wait for Shutdown Signal or error
 	select {
 	case <-sigChan:
-		logger.Title("Shutting down")
-		logger.Info("Shutdown signal received...")
+		slog.Info("=== SHUTTING DOWN ===")
+		slog.Info("shutdown signal received...")
 	case err := <-errChan:
-		logger.Title("Fatal Error")
-		logger.Error("Service crashing due to: %v", err)
+		slog.Error("=== FATAL ERROR ===")
+		slog.Error("fatal error", "error", err)
 	}
 
 	// Stop Kafka first (stop processing new messages)
 	cancel()
-	logger.Info("Kafka consumer stopping...")
+	slog.Info("Kafka consumer stopping...")
 
 	// Stop HTTP server (stop accepting new requests)
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Error("HTTP server shutdown error: %v", err)
+		slog.Error("shutting down HTTP server", "error", err)
 	} else {
-		logger.Success("HTTP server stopped")
+		slog.Info("HTTP server stopped")
 	}
 
 	// Close Kafka Connection
 	if err := consumer.Close(); err != nil {
-		logger.Error("Kafka consumer close error: %v", err)
+		slog.Error("closing Kafka consumer", "error", err)
 	} else {
-		logger.Success("Kafka consumer stopped")
+		slog.Info("Kafka consumer stopped")
 	}
 
 	// Wait for goroutines to finish
@@ -139,13 +158,48 @@ func main() {
 
 	// Final Stats
 	stats := consumer.GetStats()
-	logger.Title("Final Statistics")
-	logger.Info("Messages Received:  %d", stats.MessagesReceived)
-	logger.Info("Messages Processed: %d", stats.MessagesProcessed)
-	logger.Info("Messages Failed:    %d", stats.MessagesFailed)
+	slog.Info("stats: messages", "received", stats.MessagesReceived, "processed", stats.MessagesProcessed, "failed", stats.MessagesFailed)
 
 	cacheStats := orderCache.GetStats()
-	logger.Info("Cache Hits:         %d", cacheStats.Hits)
-	logger.Info("Cache Misses:       %d", cacheStats.Misses)
-	logger.Info("Cache Evictions:    %d", cacheStats.Evictions)
+	slog.Info("stats: cache", "hits", cacheStats.Hits, "misses", cacheStats.Misses, "evictions", cacheStats.Evictions)
+}
+
+func parseLogLevel(s string) slog.Level {
+	switch strings.ToLower(s) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func setupLogger(level slog.Level) {
+	// Use colored output for terminals, plain text otherwise
+	var handler slog.Handler
+
+	if isTerminal() {
+		handler = tint.NewHandler(os.Stderr, &tint.Options{
+			Level:      level,
+			TimeFormat: "15:04:05",
+		})
+	} else {
+		// JSON for production / log aggregation
+		handler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: level,
+		})
+	}
+
+	slog.SetDefault(slog.New(handler))
+}
+
+func isTerminal() bool {
+	fi, err := os.Stderr.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }

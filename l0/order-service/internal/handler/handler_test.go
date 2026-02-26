@@ -6,16 +6,19 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"order-service/internal/cache"
-	"order-service/internal/testutil"
 	"strings"
 	"testing"
 	"time"
+
+	"order-service/internal/cache"
+	"order-service/internal/config"
+	"order-service/internal/mocks"
+	"order-service/internal/testutil"
 )
 
-func createTestHandler() (*Handler, *testutil.MockRepo) {
-	orderCache := cache.New(cache.Config{MaxItems: 100, TTL: time.Hour})
-	mockRepo := testutil.NewMockRepo()
+func createTestHandler() (*Handler, *mocks.MockRepo) {
+	orderCache := cache.New(config.CacheConfig{MaxItems: 100, TTL: time.Hour})
+	mockRepo := mocks.NewMockRepo()
 	h := &Handler{
 		cache:     orderCache,
 		repo:      mockRepo,
@@ -448,7 +451,7 @@ func TestHandler_GetStats_CountError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.Router().ServeHTTP(rec, req)
 
-	// Should still return 200 — count falls back to -1
+	// Should still return 200 - count falls back to -1
 	if rec.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", rec.Code)
 	}
@@ -495,6 +498,108 @@ func TestHandler_GetOrder_CacheMissThenDB(t *testing.T) {
 	json.NewDecoder(rec2.Body).Decode(&resp2)
 	if resp2["source"] != "cache" {
 		t.Errorf("Second request should come from cache, got %v", resp2["source"])
+	}
+}
+
+func TestHandler_GetOrder_EmptyUID(t *testing.T) {
+	h, _ := createTestHandler()
+
+	// Chi won't route to this (no match), but test the param validation
+	req := httptest.NewRequest(http.MethodGet, "/order/", nil)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+
+	// Chi returns 405 or redirects for trailing slash - just verify no panic
+	if rec.Code == http.StatusOK {
+		t.Error("Empty UID should not return 200")
+	}
+}
+
+func TestHandler_GetOrder_TooLongUID(t *testing.T) {
+	h, _ := createTestHandler()
+
+	longUID := strings.Repeat("a", 51)
+	req := httptest.NewRequest(http.MethodGet, "/order/"+longUID, nil)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for too-long UID, got %d", rec.Code)
+	}
+}
+
+func TestHandler_GetOrderList_InvalidParams(t *testing.T) {
+	h, _ := createTestHandler()
+
+	// Negative limit should use default
+	req := httptest.NewRequest(http.MethodGet, "/orders?limit=-5&offset=-1", nil)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&resp)
+
+	if resp["limit"].(float64) != float64(defaultPageLimit) {
+		t.Errorf("Negative limit should fall back to default, got %v", resp["limit"])
+	}
+}
+
+func TestHandler_GetOrderList_SortAsc(t *testing.T) {
+	h, mockRepo := createTestHandler()
+	for i := 0; i < 3; i++ {
+		mockRepo.AddOrder(testutil.CreateTestOrder(fmt.Sprintf("order_%03d", i)))
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/orders?sort=asc", nil)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", rec.Code)
+	}
+}
+
+func TestHandler_GetOrder_CachePopulatedAfterDBFetch(t *testing.T) {
+	h, mockRepo := createTestHandler()
+	order := testutil.CreateTestOrder("fetch_and_cache")
+	mockRepo.AddOrder(order)
+
+	// First request - cache miss, DB hit
+	req1 := httptest.NewRequest(http.MethodGet, "/order/fetch_and_cache", nil)
+	rec1 := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec1, req1)
+
+	var resp1 map[string]interface{}
+	json.NewDecoder(rec1.Body).Decode(&resp1)
+	if resp1["source"] != "database" {
+		t.Errorf("First request should be from database, got %v", resp1["source"])
+	}
+
+	// Second request - cache hit
+	req2 := httptest.NewRequest(http.MethodGet, "/order/fetch_and_cache", nil)
+	rec2 := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec2, req2)
+
+	var resp2 map[string]interface{}
+	json.NewDecoder(rec2.Body).Decode(&resp2)
+	if resp2["source"] != "cache" {
+		t.Errorf("Second request should be from cache, got %v", resp2["source"])
+	}
+}
+
+func TestHandler_MethodNotAllowed(t *testing.T) {
+	h, _ := createTestHandler()
+
+	req := httptest.NewRequest(http.MethodPost, "/order/some_uid", nil)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Error("POST to /order/{uid} should not return 200")
 	}
 }
 

@@ -1,9 +1,10 @@
 package repo
 
 import (
-	"order-service/internal/models"
 	"testing"
 	"time"
+
+	"order-service/internal/models"
 )
 
 // localTestOrder creates a test order without importing testutil

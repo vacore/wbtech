@@ -4,6 +4,76 @@ What is it?
 A microservice that receives orders data from Kafka, saves it to a PostgreSQL DB instance,
 and serves requests via HTTP API with a web interface, caching reads in a LRU+TTL cache.
 
+Architecture:
+============
+
+order-service:
+┌──────────────────────────────────────────────────────────┐
+│ ┌─────────────┐    ┌──────────────┐    ┌────────────┐    │
+│ │ Kafka       │───>│ Consumer     │───>│ Repository │────┼──> PostgreSQL
+│ │ (orders)    │    │              │    │ (repo)     │    │
+│ └─────────────┘    │ - validate   │    └────────────┘    │
+│                    │ - save       │           │          │
+│ ┌─────────────┐    │ - cache      │     ┌─────v──────┐   │
+│ │ Kafka       │<───│ - DLQ        │     │ Cache      │   │
+│ │ (DLQ)       │    └──────────────┘     │ (LRU+TTL)  │   │
+│ └─────────────┘                         └────────────┘   │
+│ ┌─────────────┐    ┌──────────────┐           ^          │
+│ │ Browser     │───>│ HTTP Handler │───────────┘          │
+│ │ (Web UI)    │<───│ (chi)        │                      │
+│ └─────────────┘    └──────────────┘                      │
+│ ┌─────────────┐    ┌──────────────┐                      │
+│ │ Prometheus  │<───│ /metrics     │                      │
+│ └─────────────┘    └──────────────┘                      │
+└──────────────────────────────────────────────────────────┘
+
+test-producer:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ┌──────────┐    ┌───────────────────────────────────┐                       │
+│ │ Kafka    │<───│ CRUD Simulator                    │                       │
+│ │ (orders) │    │ - CREATE: generate + send Kafka   │                       │
+│ └──────────┘    │ - UPDATE: generate + send Kafka   │ HTTP ┌──────────────┐ │
+│                 │ - READ:   HTTP GET /order/{id}    │─────>│ order-service│ │
+│                 │ - DELETE: HTTP DELETE /order/{id} │─────>│ (orders)     │ │
+│                 │ - INVALID: corrupted messages     │      └──────────────┘ │
+│                 └───────────────────────────────────┘                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Operations:
+==========
+CREATE/UPDATE (via Kafka incoming message):
+ - Take Kafka message with data of a new/existing order
+ - Parse order: unmarshal JSON, validate fields:
+    - OK            : save to DB, and Cache
+    - PermanentError: write to the DLQ
+ - If !noPermanentErrors -> Commit Kafka offset, else -> retry
+
+READ (via HTTP API):
+ - Fire HTTP GET /order/{id} handler
+ - Check cache:
+    - if Miss -> query from DB, save to cache
+    - marshal JSON -> response
+
+DELETE (via HTTP API):
+ - Fire HTTP DELETE /order/{id}
+ - Check cache:
+    - if Hit -> remove from cache
+    - response OK
+
+Cache:
+=====
+At any given time the cache stores at most <CacheMaxItems> items.
+
+Strategy: LRU + TTL.
+- LRU (Least Recently Used): each access (except delete) makes the item in cache the most recent.
+  If it's a CREATE, and the cache is full -> evict the least recent element.
+- TTL (Time To Live): all items live for a specified time.
+  A background process is running to evict expired ones.
+
+On startup:
+    The service queries <CacheMaxItems> from the DB sorted in descending order by date_created,
+    and stores them into cache.
+
 Instructions:
 ============
 
@@ -35,11 +105,15 @@ Shut down the environment:
 `$ docker compose down --remove-orphans`
 `$ docker volume prune -af`
 
+Override log level:
+`$ LOG_LEVEL=warn docker compose up order-service`
+
 
 Working check:
 -------------
 
 Web-interface: http://localhost:8081
+Metrics:       http://localhost:8081/metrics
 
 Get specific order:
 `$ curl -s http://localhost:8081/order/a8715b15e9826314test | jq '.'`
@@ -67,6 +141,9 @@ Get coverage report:
 `$ go test ./... -coverprofile=coverage.out`
 `$ go tool cover -html=coverage.out -o coverage.html`
 
+Integration tests with PostgreSQL:
+`$ go test ./internal/repo -tags=integration -v -count=1`
+
 
 Manual build and run:
 --------------------
@@ -85,8 +162,14 @@ Run the linter to check for issues:
 `$ golangci-lint run`
 
 
-PostgreSQL console:
-------------------
+PostgreSQL:
+----------
+
+Apply (up):
+`$ docker exec -i orders_postgres psql -U orders_user -d orders_db < sql/up.sql`
+
+Rollback (down):
+`$ docker exec -i orders_postgres psql -U orders_user -d orders_db < sql/down.sql`
 
 Enter console:
 `$ docker exec -it orders_postgres psql -U orders_user -d orders_db`
